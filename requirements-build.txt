@@ -1,0 +1,2 @@
+# Build-time dependencies (not needed to run from sources).
+pyinstaller>=6.11,<7

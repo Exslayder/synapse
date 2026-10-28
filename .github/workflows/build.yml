@@ -1,0 +1,135 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Every Monday, 03:00 UTC.
+    - cron: "0 3 * * 1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: Install build requirements
+        run: python -m pip install --upgrade -r requirements-build.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Compile all sources
+        run: python -m compileall -q src tests run.py build.py tools
+
+  build:
+    name: Build EXE
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Upgrade pip and build dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --upgrade -r requirements-build.txt
+
+      - name: Build
+        run: python build.py
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath ".\dist\GeminiDoH.exe" -ArgumentList "--version" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "GeminiDoH.exe --version failed with exit code $($process.ExitCode)"
+          }
+
+      - name: Collect environment information
+        shell: pwsh
+        run: |
+          python -m pip freeze | Out-File -Encoding utf8 dist/pip-freeze.txt
+          Get-Content dist/GeminiDoH-build-info.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeminiDoH-${{ github.run_number }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/GeminiDoH.exe
+            dist/GeminiDoH.exe.sha256
+            dist/GeminiDoH-build-info.json
+            dist/pip-freeze.txt
+
+      - name: Weekly date
+        id: date
+        if: github.event_name == 'schedule'
+        shell: pwsh
+        run: echo "value=$(Get-Date -Format 'yyyy.MM.dd')" >> $env:GITHUB_OUTPUT
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: |
+            dist/GeminiDoH.exe
+            dist/GeminiDoH.exe.sha256
+            dist/GeminiDoH-build-info.json
+            dist/pip-freeze.txt
+
+      - name: Publish weekly build
+        if: github.event_name == 'schedule'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: weekly-${{ steps.date.outputs.value }}
+          name: Weekly build ${{ steps.date.outputs.value }}
+          body: |
+            Automated weekly build with the latest pip/build dependencies.
+
+            - `GeminiDoH.exe` — portable Windows executable
+            - `GeminiDoH.exe.sha256` — SHA-256 checksum
+            - `GeminiDoH-build-info.json` — version and build metadata
+            - `pip-freeze.txt` — exact build environment
+
+            The executable is unsigned, so Windows SmartScreen may ask for confirmation.
+          generate_release_notes: true
+          draft: false
+          prerelease: true
+          make_latest: false
+          files: |
+            dist/GeminiDoH.exe
+            dist/GeminiDoH.exe.sha256
+            dist/GeminiDoH-build-info.json
+            dist/pip-freeze.txt

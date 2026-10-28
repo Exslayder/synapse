@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "doh": {
+    "url": "https://dns.dagami.ru/dns-query",
+    "bootstrap_ips": [
+      "45.147.31.32"
+    ],
+    "fallback_tcp": true,
+    "timeout": 8.0
+  },
+  "proxy_port": 8877,
+  "allowed_ports": [
+    80,
+    443
+  ],
+  "browser": "auto",
+  "browser_path": "",
+  "browser_width": 1280,
+  "browser_height": 860,
+  "close_browsers_on_exit": true,
+  "window_geometry": "",
+  "window_topmost": false,
+  "sites": [
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "url": "https://gemini.google.com",
+      "pinned": false,
+      "enabled": true
+    },
+    {
+      "id": "chatgpt",
+      "name": "ChatGPT",
+      "url": "https://chatgpt.com",
+      "pinned": false,
+      "enabled": true
+    },
+    {
+      "id": "claude",
+      "name": "Claude",
+      "url": "https://claude.ai",
+      "pinned": false,
+      "enabled": true
+    },
+    {
+      "id": "grok",
+      "name": "Grok",
+      "url": "https://grok.com",
+      "pinned": false,
+      "enabled": true
+    }
+  ]
+}

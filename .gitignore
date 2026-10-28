@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+*.spec
+
+# Runtime data
+config.json
+config.broken-*.json
+profiles/
+logs/
+app.lock
+*.log
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
