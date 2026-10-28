@@ -63,6 +63,7 @@ class AppPaths:
     logs: Path
     lock: Path
     icon: Path
+    icon_png: Path
 
     @property
     def log_file(self) -> Path:
@@ -89,4 +90,5 @@ class AppPaths:
             logs=logs,
             lock=root / "app.lock",
             icon=resource_path("assets/gemini-doh.ico"),
+            icon_png=resource_path("assets/icon.png"),
         )

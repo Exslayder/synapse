@@ -185,7 +185,7 @@ class ConfigStoreTests(unittest.TestCase):
         self.assertFalse((self.path.parent / "config.json.tmp").exists())
         self.assertEqual(
             json.loads(self.path.read_text(encoding="utf-8"))["version"],
-            2,
+            3,
         )
 
     def test_corrupt_file_is_backed_up(self) -> None:

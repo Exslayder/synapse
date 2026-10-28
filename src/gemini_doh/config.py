@@ -19,7 +19,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .net import HOST_RE, is_ip, normalize_host
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 DEFAULT_DOH_URL = "https://dns.dagami.ru/dns-query"
 DEFAULT_BOOTSTRAP = ["45.147.31.32"]
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -284,6 +284,8 @@ class AppConfig:
     close_browsers_on_exit: bool = True
     window_geometry: str = ""
     window_topmost: bool = False
+    auto_check_updates: bool = True
+    last_update_check: str = ""
 
     @classmethod
     def default(cls) -> AppConfig:
@@ -302,6 +304,8 @@ class AppConfig:
             "close_browsers_on_exit": self.close_browsers_on_exit,
             "window_geometry": self.window_geometry,
             "window_topmost": self.window_topmost,
+            "auto_check_updates": self.auto_check_updates,
+            "last_update_check": self.last_update_check,
             "sites": [site.to_dict() for site in self.sites],
         }
 
@@ -349,7 +353,7 @@ class AppConfig:
             geometry = ""
 
         browser = str(data.get("browser", "auto") or "auto").lower()
-        if browser not in {"auto", "edge", "chrome", "brave", "custom"}:
+        if browser not in {"auto", "chrome", "firefox", "custom"}:
             browser = "auto"
 
         try:
@@ -375,6 +379,8 @@ class AppConfig:
             close_browsers_on_exit=bool(data.get("close_browsers_on_exit", True)),
             window_geometry=geometry,
             window_topmost=bool(data.get("window_topmost", False)),
+            auto_check_updates=bool(data.get("auto_check_updates", True)),
+            last_update_check=str(data.get("last_update_check", "") or ""),
         )
 
 

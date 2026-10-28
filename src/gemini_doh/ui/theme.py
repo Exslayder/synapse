@@ -2,21 +2,54 @@
 
 from __future__ import annotations
 
+import ctypes
+import sys
 import tkinter as tk
 from tkinter import ttk
 
-BG = "#12140f"
-PANEL = "#1c1f17"
-PANEL_HOVER = "#262a1f"
-BORDER = "#32362b"
-TEXT = "#eceadf"
-MUTED = "#b2af9f"
-ACCENT = "#dff25a"
-ACCENT_HOVER = "#eafb84"
-ERROR = "#ff8f80"
-OK = "#9ee37d"
+BG = "#0c0e14"
+BG_ALT = "#10131b"
+PANEL = "#151924"
+PANEL_HOVER = "#1c2130"
+BORDER = "#242b3b"
+BORDER_HI = "#33405a"
+TEXT = "#e9edf7"
+MUTED = "#8d97ad"
+DIM = "#616b80"
+ACCENT = "#8f9dff"
+ACCENT_HOVER = "#a9b6ff"
+ACCENT_DOWN = "#7b89f0"
+ACCENT_TEXT = "#0b0d14"
+ACCENT_SOFT = "#1b2140"
+OK = "#5fdba7"
+ERROR = "#ff8b8b"
+WARN = "#ffce6b"
 FONT = "Segoe UI"
 MONO = "Consolas"
+
+
+def dark_titlebar(window: tk.Misc) -> None:
+    """Ask DWM for a dark title bar (Windows 10 1809+); silently ignore failures."""
+    if sys.platform != "win32":
+        return
+    try:
+        window.update_idletasks()
+        hwnd = int(window.winfo_id())
+        parent = int(ctypes.windll.user32.GetParent(hwnd))
+        if parent:
+            hwnd = parent
+        enabled = ctypes.c_int(1)
+        for attribute in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE, older builds
+            result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd,
+                attribute,
+                ctypes.byref(enabled),
+                ctypes.sizeof(enabled),
+            )
+            if result == 0:
+                break
+    except Exception:
+        pass
 
 
 def setup_ttk(root: tk.Misc) -> ttk.Style:
@@ -43,26 +76,32 @@ def setup_ttk(root: tk.Misc) -> ttk.Style:
     )
     style.configure(
         "TCombobox",
-        fieldbackground=PANEL,
-        background=PANEL,
+        fieldbackground=PANEL_HOVER,
+        background=PANEL_HOVER,
         foreground=TEXT,
-        arrowcolor=ACCENT,
+        arrowcolor=MUTED,
         bordercolor=BORDER,
         lightcolor=BORDER,
         darkcolor=BORDER,
-        padding=6,
+        padding=7,
+        relief="flat",
+        selectbackground=PANEL_HOVER,
+        selectforeground=TEXT,
     )
     style.map(
         "TCombobox",
-        fieldbackground=[("readonly", PANEL)],
+        fieldbackground=[("readonly", PANEL_HOVER), ("focus", PANEL_HOVER)],
+        background=[("active", PANEL_HOVER)],
         foreground=[("readonly", TEXT)],
-        selectbackground=[("readonly", PANEL)],
+        selectbackground=[("readonly", PANEL_HOVER)],
         selectforeground=[("readonly", TEXT)],
+        bordercolor=[("focus", ACCENT_HOVER)],
     )
     root.option_add("*TCombobox*Listbox.background", PANEL)
     root.option_add("*TCombobox*Listbox.foreground", TEXT)
     root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
-    root.option_add("*TCombobox*Listbox.selectForeground", BG)
+    root.option_add("*TCombobox*Listbox.selectForeground", ACCENT_TEXT)
+    root.option_add("*TCombobox*Listbox.borderWidth", 0)
 
     style.configure(
         "Treeview",
@@ -70,30 +109,35 @@ def setup_ttk(root: tk.Misc) -> ttk.Style:
         fieldbackground=PANEL,
         foreground=TEXT,
         bordercolor=BORDER,
-        rowheight=28,
+        borderwidth=0,
+        rowheight=30,
         font=(FONT, 10),
     )
     style.map(
         "Treeview",
-        background=[("selected", "#3a402e")],
+        background=[("selected", ACCENT_SOFT)],
         foreground=[("selected", TEXT)],
     )
     style.configure(
         "Treeview.Heading",
-        background=PANEL_HOVER,
+        background=PANEL,
         foreground=MUTED,
         relief="flat",
         font=(FONT, 9),
-        padding=(6, 6),
+        padding=(8, 8),
     )
     style.map("Treeview.Heading", background=[("active", PANEL_HOVER)])
     style.configure(
         "Vertical.TScrollbar",
-        background=PANEL_HOVER,
+        background=BORDER_HI,
         troughcolor=BG,
         bordercolor=BG,
-        arrowcolor=MUTED,
+        arrowcolor=BG,
+        arrowsize=1,
+        width=10,
         relief="flat",
+        borderwidth=0,
     )
+    style.map("Vertical.TScrollbar", background=[("active", ACCENT)])
     style.configure("TSeparator", background=BORDER)
     return style

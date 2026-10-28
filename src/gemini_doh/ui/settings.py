@@ -1,4 +1,4 @@
-"""Settings window: DoH, browser, sites."""
+"""Settings window: DoH, browser, sites and updates."""
 
 from __future__ import annotations
 
@@ -10,9 +10,13 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, ttk
 from collections.abc import Callable
 
+from .. import __version__
+from .. import updater
+from ..browser import browser_candidates, resolve_browser
 from ..config import (
     AppConfig,
     ConfigError,
@@ -24,14 +28,27 @@ from ..config import (
     slugify,
 )
 from ..doh import DohResolver
-from .theme import ACCENT, BG, BORDER, ERROR, FONT, MUTED, OK, PANEL, PANEL_HOVER, TEXT
-from .widgets import FlatButton, make_checkbutton, make_entry, make_label
+from .theme import (
+    ACCENT,
+    BG,
+    BORDER,
+    DIM,
+    ERROR,
+    FONT,
+    MONO,
+    MUTED,
+    OK,
+    PANEL,
+    PANEL_HOVER,
+    TEXT,
+    dark_titlebar,
+)
+from .widgets import Card, FlatButton, Switch, make_entry, make_label
 
 BROWSER_CHOICES = [
-    ("Авто (Edge / Chrome)", "auto"),
-    ("Microsoft Edge", "edge"),
+    ("Авто — Chrome, затем Firefox", "auto"),
     ("Google Chrome", "chrome"),
-    ("Brave", "brave"),
+    ("Firefox", "firefox"),
     ("Другой файл…", "custom"),
 ]
 
@@ -48,6 +65,29 @@ def open_path(path: str) -> None:
         pass
 
 
+def make_spinbox(parent: tk.Misc, variable: tk.Variable, low: int, high: int, step: int, width: int) -> tk.Spinbox:
+    return tk.Spinbox(
+        parent,
+        from_=low,
+        to=high,
+        increment=step,
+        textvariable=variable,
+        width=width,
+        bg=PANEL_HOVER,
+        fg=TEXT,
+        buttonbackground=PANEL_HOVER,
+        insertbackground=ACCENT,
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground=BORDER,
+        highlightcolor=ACCENT,
+        font=(FONT, 10),
+        disabledbackground=PANEL,
+        disabledforeground=MUTED,
+    )
+
+
 class SettingsDialog(tk.Toplevel):
     def __init__(
         self,
@@ -62,11 +102,14 @@ class SettingsDialog(tk.Toplevel):
         self.config = copy.deepcopy(services.config)
         self.sites: list[Site] = [copy.copy(site) for site in self.config.sites]
         self._test_running = False
+        self._update_checking = False
+        self._release: updater.Release | None = None
+        self._page = 0
 
         self.title("Настройки — Gemini DoH")
         self.configure(bg=BG)
-        self.geometry("780x670")
-        self.minsize(700, 600)
+        self.geometry("860x760")
+        self.minsize(780, 680)
         self.transient(parent)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
@@ -80,13 +123,13 @@ class SettingsDialog(tk.Toplevel):
         self.boot_var = tk.StringVar()
         self.fallback_var = tk.BooleanVar(value=True)
         self.timeout_var = tk.StringVar()
-        self.test_var = tk.StringVar(value="")
         self.browser_var = tk.StringVar()
         self.path_var = tk.StringVar()
         self.width_var = tk.StringVar()
         self.height_var = tk.StringVar()
         self.port_var = tk.StringVar()
         self.close_browsers_var = tk.BooleanVar(value=True)
+        self.auto_update_var = tk.BooleanVar(value=self.config.auto_check_updates)
 
         self._build()
         self._load()
@@ -108,241 +151,245 @@ class SettingsDialog(tk.Toplevel):
             self.focus_force()
         except tk.TclError:
             pass
+        dark_titlebar(self)
+
+    # ------------------------------------------------------------------ build
 
     def _build(self) -> None:
         outer = tk.Frame(self, bg=BG)
-        outer.pack(fill="both", expand=True, padx=20, pady=16)
+        outer.pack(fill="both", expand=True, padx=24, pady=20)
 
-        make_label(outer, "Настройки", font=(FONT, 17), fg=TEXT).pack(anchor="w")
+        make_label(outer, "Настройки", font=(FONT, 18, "bold"), fg=TEXT).pack(anchor="w")
         make_label(
             outer,
-            "Изменения DNS применяются сразу. Порт прокси — после перезапуска.",
+            "DNS применяется сразу. Порт прокси и браузер — при следующем открытии окна.",
             fg=MUTED,
             font=(FONT, 9),
-        ).pack(anchor="w", pady=(2, 12))
+        ).pack(anchor="w", pady=(2, 14))
 
-        notebook = ttk.Notebook(outer)
-        notebook.pack(fill="both", expand=True)
+        segments = tk.Frame(outer, bg=BG)
+        segments.pack(fill="x", pady=(0, 12))
+        self._segments: list[FlatButton] = []
+        for index, title in enumerate(("DNS", "Браузер", "Сайты", "Обновления")):
+            button = FlatButton(
+                segments,
+                title,
+                lambda i=index: self._select(i),
+                small=True,
+                ghost=True,
+            )
+            button.pack(side="left", padx=(0, 8))
+            self._segments.append(button)
 
-        dns_tab = tk.Frame(notebook, bg=BG)
-        browser_tab = tk.Frame(notebook, bg=BG)
-        sites_tab = tk.Frame(notebook, bg=BG)
-        notebook.add(dns_tab, text="  DNS  ")
-        notebook.add(browser_tab, text="  Браузер  ")
-        notebook.add(sites_tab, text="  Сайты  ")
+        self.pages = tk.Frame(outer, bg=BG)
+        self.pages.pack(fill="both", expand=True)
+        self.pages.columnconfigure(0, weight=1)
+        self.pages.rowconfigure(0, weight=1)
 
-        self._build_dns(dns_tab)
-        self._build_browser(browser_tab)
-        self._build_sites(sites_tab)
+        self.page_dns = tk.Frame(self.pages, bg=BG)
+        self.page_browser = tk.Frame(self.pages, bg=BG)
+        self.page_sites = tk.Frame(self.pages, bg=BG)
+        self.page_updates = tk.Frame(self.pages, bg=BG)
+        for page in (self.page_dns, self.page_browser, self.page_sites, self.page_updates):
+            page.grid(row=0, column=0, sticky="nsew")
+
+        self._build_dns(self.page_dns)
+        self._build_browser(self.page_browser)
+        self._build_sites(self.page_sites)
+        self._build_updates(self.page_updates)
 
         bottom = tk.Frame(outer, bg=BG)
         bottom.pack(fill="x", pady=(14, 0))
         FlatButton(bottom, "Сохранить", self._save, accent=True).pack(side="right")
-        FlatButton(bottom, "Отмена", self.destroy).pack(side="right", padx=(0, 8))
+        FlatButton(bottom, "Отмена", self.destroy, ghost=True).pack(side="right", padx=(0, 10))
 
-    def _build_dns(self, tab: tk.Frame) -> None:
-        tab.columnconfigure(1, weight=1)
+        self._select(0)
 
-        make_label(tab, "DoH-сервер").grid(row=0, column=0, sticky="w", pady=(18, 4))
-        url_entry = make_entry(tab, self.url_var)
-        url_entry.grid(row=0, column=1, sticky="ew", padx=(14, 0), pady=(18, 4))
-        make_label(
-            tab,
-            "Например: https://dns.dagami.ru/dns-query",
-            fg=MUTED,
-            font=(FONT, 9),
-        ).grid(row=1, column=1, sticky="w", padx=(14, 0))
+    def _select(self, index: int) -> None:
+        self._page = index
+        pages = (self.page_dns, self.page_browser, self.page_sites, self.page_updates)
+        pages[index].tkraise()
+        for position, button in enumerate(self._segments):
+            button.set_active(position == index)
 
-        make_label(tab, "Bootstrap IP").grid(row=2, column=0, sticky="w", pady=(16, 4))
-        make_entry(tab, self.boot_var).grid(row=2, column=1, sticky="ew", padx=(14, 0), pady=(16, 4))
-        make_label(
-            tab,
-            "IP через запятую. Запрос идёт сразу на этот адрес, а сертификат "
-            "проверяется по имени DoH-сервера.",
-            fg=MUTED,
-            font=(FONT, 9),
-            wraplength=520,
-        ).grid(row=3, column=1, sticky="w", padx=(14, 0))
+    def _build_dns(self, page: tk.Frame) -> None:
+        card = Card(page, padding=(24, 20))
+        card.pack(fill="x")
+        body = card.body
+        body.columnconfigure(1, weight=1)
 
-        make_checkbutton(
-            tab,
-            "Разрешить резервный DNS/53, если DoH недоступен",
-            self.fallback_var,
-        ).grid(row=4, column=1, sticky="w", padx=(14, 0), pady=(16, 4))
-
-        make_label(tab, "Таймаут, сек").grid(row=5, column=0, sticky="w", pady=(8, 4))
-        timeout = tk.Spinbox(
-            tab,
-            from_=2,
-            to=30,
-            increment=1,
-            textvariable=self.timeout_var,
-            width=6,
-            bg=PANEL,
-            fg=TEXT,
-            buttonbackground=PANEL_HOVER,
-            insertbackground=ACCENT,
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground=BORDER,
-            highlightcolor=ACCENT,
-            font=(FONT, 10),
+        make_label(body, "DoH-сервер", bg=PANEL, font=(FONT, 10)).grid(
+            row=0, column=0, sticky="w", pady=(0, 8)
         )
-        timeout.grid(row=5, column=1, sticky="w", padx=(14, 0), pady=(8, 4))
+        make_entry(body, self.url_var, width=46).grid(
+            row=0, column=1, sticky="ew", padx=(16, 0), pady=(0, 8)
+        )
+        make_label(
+            body,
+            "Например: https://dns.dagami.ru/dns-query",
+            bg=PANEL,
+            fg=DIM,
+            font=(FONT, 8),
+        ).grid(row=1, column=1, sticky="w", padx=(16, 0))
 
-        actions = tk.Frame(tab, bg=BG)
-        actions.grid(row=6, column=0, columnspan=2, sticky="w", pady=(18, 6))
-        self.test_btn = FlatButton(actions, "Проверить DNS", self._test_dns, small=True)
+        make_label(body, "Bootstrap IP", bg=PANEL, font=(FONT, 10)).grid(
+            row=2, column=0, sticky="w", pady=(18, 8)
+        )
+        make_entry(body, self.boot_var, width=46).grid(
+            row=2, column=1, sticky="ew", padx=(16, 0), pady=(18, 8)
+        )
+        make_label(
+            body,
+            "IP через запятую: запрос идёт сразу на этот адрес, сертификат проверяется по имени DoH.",
+            bg=PANEL,
+            fg=DIM,
+            font=(FONT, 8),
+            wraplength=520,
+        ).grid(row=3, column=1, sticky="w", padx=(16, 0))
+
+        Switch(
+            body,
+            text="Резервный DNS/53, если DoH недоступен",
+            variable=self.fallback_var,
+        ).grid(row=4, column=1, sticky="w", padx=(16, 0), pady=(16, 0))
+
+        make_label(body, "Таймаут, сек", bg=PANEL, font=(FONT, 10)).grid(
+            row=5, column=0, sticky="w", pady=(18, 0)
+        )
+        make_spinbox(body, self.timeout_var, 2, 30, 1, 5).grid(
+            row=5, column=1, sticky="w", padx=(16, 0), pady=(18, 0)
+        )
+
+        actions = tk.Frame(body, bg=PANEL)
+        actions.grid(row=6, column=0, columnspan=2, sticky="w", pady=(22, 0))
+        self.test_btn = FlatButton(actions, "Проверить DNS", self._test_dns)
         self.test_btn.pack(side="left")
-        FlatButton(actions, "Сбросить на Dagami", self._reset_dns, small=True).pack(
-            side="left", padx=(8, 0)
+        FlatButton(actions, "Сбросить на Dagami", self._reset_dns, ghost=True).pack(
+            side="left", padx=(10, 0)
         )
 
         self.test_label = make_label(
-            tab,
+            body,
             "",
+            bg=PANEL,
             fg=MUTED,
             font=(FONT, 9),
-            wraplength=620,
+            wraplength=640,
             justify="left",
         )
-        self.test_label.grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 8))
+        self.test_label.grid(row=7, column=0, columnspan=2, sticky="w", pady=(14, 0))
 
         make_label(
-            tab,
+            body,
             "Проверка запрашивает gemini.google.com через указанный DoH. "
-            "Сертификат DoH-сервера всегда проверяется.",
-            fg=MUTED,
-            font=(FONT, 9),
-            wraplength=620,
+            "Сертификат DoH-сервера проверяется всегда.",
+            bg=PANEL,
+            fg=DIM,
+            font=(FONT, 8),
+            wraplength=640,
             justify="left",
-        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(12, 0))
 
-    def _build_browser(self, tab: tk.Frame) -> None:
-        tab.columnconfigure(1, weight=1)
+    def _build_browser(self, page: tk.Frame) -> None:
+        card = Card(page, padding=(24, 20))
+        card.pack(fill="x")
+        body = card.body
+        body.columnconfigure(1, weight=1)
 
-        make_label(tab, "Браузер").grid(row=0, column=0, sticky="w", pady=(18, 4))
+        make_label(body, "Браузер", bg=PANEL, font=(FONT, 10)).grid(
+            row=0, column=0, sticky="w", pady=(0, 8)
+        )
         self.browser_combo = ttk.Combobox(
-            tab,
+            body,
             textvariable=self.browser_var,
             values=[label for label, _key in BROWSER_CHOICES],
             state="readonly",
+            font=(FONT, 10),
         )
-        self.browser_combo.grid(row=0, column=1, sticky="ew", padx=(14, 0), pady=(18, 4))
+        self.browser_combo.grid(row=0, column=1, sticky="ew", padx=(16, 0), pady=(0, 8))
 
-        make_label(tab, "Путь к .exe").grid(row=1, column=0, sticky="w", pady=(12, 4))
-        path_row = tk.Frame(tab, bg=BG)
-        path_row.grid(row=1, column=1, sticky="ew", padx=(14, 0), pady=(12, 4))
+        self.detected_label = make_label(body, "", bg=PANEL, fg=DIM, font=(FONT, 8), wraplength=560)
+        self.detected_label.grid(row=1, column=1, sticky="w", padx=(16, 0))
+
+        make_label(body, "Путь к .exe", bg=PANEL, font=(FONT, 10)).grid(
+            row=2, column=0, sticky="w", pady=(18, 8)
+        )
+        path_row = tk.Frame(body, bg=PANEL)
+        path_row.grid(row=2, column=1, sticky="ew", padx=(16, 0), pady=(18, 8))
         path_row.columnconfigure(0, weight=1)
-        make_entry(path_row, self.path_var).grid(row=0, column=0, sticky="ew")
-        FlatButton(path_row, "Обзор…", self._browse_browser, small=True).grid(
-            row=0, column=1, padx=(8, 0)
+        make_entry(path_row, self.path_var, width=40).grid(row=0, column=0, sticky="ew")
+        FlatButton(path_row, "Обзор…", self._browse_browser, small=True, ghost=True).grid(
+            row=0, column=1, padx=(10, 0)
         )
         make_label(
-            tab,
+            body,
             "Можно оставить пустым: браузер определится автоматически.",
-            fg=MUTED,
-            font=(FONT, 9),
-        ).grid(row=2, column=1, sticky="w", padx=(14, 0))
-
-        make_label(tab, "Размер окна сайта").grid(row=3, column=0, sticky="w", pady=(18, 4))
-        size_row = tk.Frame(tab, bg=BG)
-        size_row.grid(row=3, column=1, sticky="w", padx=(14, 0), pady=(18, 4))
-        width = tk.Spinbox(
-            size_row,
-            from_=640,
-            to=3840,
-            increment=20,
-            textvariable=self.width_var,
-            width=7,
             bg=PANEL,
-            fg=TEXT,
-            buttonbackground=PANEL_HOVER,
-            insertbackground=ACCENT,
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground=BORDER,
-            highlightcolor=ACCENT,
-            font=(FONT, 10),
-        )
-        width.pack(side="left")
-        make_label(size_row, " × ", fg=MUTED).pack(side="left")
-        height = tk.Spinbox(
-            size_row,
-            from_=480,
-            to=2160,
-            increment=20,
-            textvariable=self.height_var,
-            width=7,
-            bg=PANEL,
-            fg=TEXT,
-            buttonbackground=PANEL_HOVER,
-            insertbackground=ACCENT,
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground=BORDER,
-            highlightcolor=ACCENT,
-            font=(FONT, 10),
-        )
-        height.pack(side="left")
+            fg=DIM,
+            font=(FONT, 8),
+        ).grid(row=3, column=1, sticky="w", padx=(16, 0))
 
-        make_label(tab, "Порт прокси").grid(row=4, column=0, sticky="w", pady=(12, 4))
-        port = tk.Spinbox(
-            tab,
-            from_=1024,
-            to=65535,
-            increment=1,
-            textvariable=self.port_var,
-            width=8,
-            bg=PANEL,
-            fg=TEXT,
-            buttonbackground=PANEL_HOVER,
-            insertbackground=ACCENT,
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground=BORDER,
-            highlightcolor=ACCENT,
-            font=(FONT, 10),
+        make_label(body, "Размер окна", bg=PANEL, font=(FONT, 10)).grid(
+            row=4, column=0, sticky="w", pady=(18, 0)
         )
-        port.grid(row=4, column=1, sticky="w", padx=(14, 0), pady=(12, 4))
+        size_row = tk.Frame(body, bg=PANEL)
+        size_row.grid(row=4, column=1, sticky="w", padx=(16, 0), pady=(18, 0))
+        make_spinbox(size_row, self.width_var, 640, 3840, 20, 6).pack(side="left")
+        make_label(size_row, "×", bg=PANEL, fg=MUTED).pack(side="left", padx=8)
+        make_spinbox(size_row, self.height_var, 480, 2160, 20, 6).pack(side="left")
 
-        make_checkbutton(
-            tab,
-            "Закрывать окна сайтов при выходе из программы",
-            self.close_browsers_var,
-        ).grid(row=5, column=1, sticky="w", padx=(14, 0), pady=(18, 4))
+        make_label(body, "Порт прокси", bg=PANEL, font=(FONT, 10)).grid(
+            row=5, column=0, sticky="w", pady=(16, 0)
+        )
+        make_spinbox(body, self.port_var, 1024, 65535, 1, 7).grid(
+            row=5, column=1, sticky="w", padx=(16, 0), pady=(16, 0)
+        )
+
+        Switch(
+            body,
+            text="Закрывать окна сайтов при выходе",
+            variable=self.close_browsers_var,
+        ).grid(row=6, column=1, sticky="w", padx=(16, 0), pady=(18, 0))
 
         make_label(
-            tab,
-            "Логины сохраняются в profiles/<id>. У каждого сайта отдельный профиль.",
-            fg=MUTED,
-            font=(FONT, 9),
-            wraplength=560,
+            body,
+            "Chrome открывает настоящее окно приложения без адресной строки. "
+            "Firefox такого режима не имеет и открывает обычное окно; прокси "
+            "прописывается в user.js отдельного профиля.",
+            bg=PANEL,
+            fg=DIM,
+            font=(FONT, 8),
+            wraplength=600,
             justify="left",
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(18, 2))
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(20, 4))
 
         path = str(self.services.paths.profiles)
-        row = tk.Frame(tab, bg=BG)
-        row.grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
-        make_label(row, path, fg=MUTED, font=("Consolas", 9)).pack(side="left")
-        FlatButton(row, "Открыть", lambda: open_path(path), small=True).pack(
-            side="left", padx=(8, 0)
+        row = tk.Frame(body, bg=PANEL)
+        row.grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        make_label(row, path, bg=PANEL, fg=MUTED, font=(MONO, 8)).pack(side="left")
+        FlatButton(row, "Открыть", lambda: open_path(path), small=True, ghost=True).pack(
+            side="left", padx=(10, 0)
         )
 
-    def _build_sites(self, tab: tk.Frame) -> None:
-        tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=1)
+    def _build_sites(self, page: tk.Frame) -> None:
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
+
+        card = Card(page, padding=(16, 14), fill_height=True)
+        card.grid(row=0, column=0, sticky="nsew")
+        body = card.body
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
 
         make_label(
-            tab,
-            "Сайты открываются в отдельных окнах браузера. «Поверх» закрепляет окно.",
+            body,
+            "Каждый сайт открывается в отдельном окне и хранит свой вход.",
+            bg=PANEL,
             fg=MUTED,
             font=(FONT, 9),
-            wraplength=660,
-            justify="left",
-        ).grid(row=0, column=0, sticky="w", pady=(14, 8))
+        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
-        tree_frame = tk.Frame(tab, bg=BG)
+        tree_frame = tk.Frame(body, bg=PANEL)
         tree_frame.grid(row=1, column=0, sticky="nsew")
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
@@ -358,12 +405,13 @@ class SettingsDialog(tk.Toplevel):
         self.tree.heading("url", text="Адрес")
         self.tree.heading("pinned", text="Поверх")
         self.tree.heading("enabled", text="Вкл.")
-        self.tree.column("name", width=140, stretch=False)
-        self.tree.column("url", width=360, stretch=True)
-        self.tree.column("pinned", width=70, stretch=False, anchor="center")
-        self.tree.column("enabled", width=50, stretch=False, anchor="center")
+        self.tree.column("name", width=150, stretch=False)
+        self.tree.column("url", width=380, stretch=True)
+        self.tree.column("pinned", width=80, stretch=False, anchor="center")
+        self.tree.column("enabled", width=60, stretch=False, anchor="center")
         self.tree.grid(row=0, column=0, sticky="nsew")
         self.tree.bind("<Double-1>", lambda _e: self._edit_site())
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: None)
 
         scrollbar = ttk.Scrollbar(
             tree_frame,
@@ -374,8 +422,8 @@ class SettingsDialog(tk.Toplevel):
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scrollbar.set)
 
-        buttons = tk.Frame(tab, bg=BG)
-        buttons.grid(row=2, column=0, sticky="w", pady=(10, 0))
+        buttons = tk.Frame(body, bg=PANEL)
+        buttons.grid(row=2, column=0, sticky="w", pady=(12, 0))
         for text, command in (
             ("Добавить", self._add_site),
             ("Изменить", self._edit_site),
@@ -383,10 +431,101 @@ class SettingsDialog(tk.Toplevel):
             ("Выше", lambda: self._move_site(-1)),
             ("Ниже", lambda: self._move_site(1)),
         ):
-            FlatButton(buttons, text, command, small=True).pack(side="left", padx=(0, 6))
-        FlatButton(buttons, "Очистить профиль", self._clear_profile, small=True).pack(
+            FlatButton(buttons, text, command, small=True, ghost=True).pack(
+                side="left", padx=(0, 8)
+            )
+        FlatButton(buttons, "Очистить профиль", self._clear_profile, small=True, ghost=True).pack(
             side="left", padx=(12, 0)
         )
+
+    def _build_updates(self, page: tk.Frame) -> None:
+        card = Card(page, padding=(24, 20))
+        card.pack(fill="x")
+        body = card.body
+        body.columnconfigure(1, weight=1)
+
+        make_label(body, "Текущая версия", bg=PANEL, font=(FONT, 10)).grid(
+            row=0, column=0, sticky="w", pady=(0, 8)
+        )
+        make_label(body, f"{__version__}", bg=PANEL, fg=TEXT, font=(MONO, 10)).grid(
+            row=0, column=1, sticky="w", padx=(16, 0), pady=(0, 8)
+        )
+
+        make_label(body, "Релизы", bg=PANEL, font=(FONT, 10)).grid(
+            row=1, column=0, sticky="w", pady=(8, 0)
+        )
+        make_label(body, updater.repo_slug(), bg=PANEL, fg=MUTED, font=(MONO, 9)).grid(
+            row=1, column=1, sticky="w", padx=(16, 0), pady=(8, 0)
+        )
+
+        Switch(
+            body,
+            text="Проверять обновления при запуске",
+            variable=self.auto_update_var,
+        ).grid(row=2, column=1, sticky="w", padx=(16, 0), pady=(16, 0))
+
+        actions = tk.Frame(body, bg=PANEL)
+        actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(18, 0))
+        self.update_btn = FlatButton(actions, "Проверить сейчас", self._check_updates)
+        self.update_btn.pack(side="left")
+        self.download_btn = FlatButton(actions, "Скачать .exe", self._download_update, accent=True)
+        self.download_btn.pack(side="left", padx=(10, 0))
+        self.download_btn.configure(state="disabled")
+        FlatButton(actions, "Страница релизов", self._open_releases, ghost=True).pack(
+            side="left", padx=(10, 0)
+        )
+
+        self.update_status = make_label(
+            body,
+            "",
+            bg=PANEL,
+            fg=MUTED,
+            font=(FONT, 9),
+            wraplength=640,
+            justify="left",
+        )
+        self.update_status.grid(row=4, column=0, columnspan=2, sticky="w", pady=(14, 0))
+
+        note = Card(body, padding=(16, 12), radius=12, fill=PANEL_HOVER, border=BORDER)
+        note.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(20, 0))
+        make_label(
+            note.body,
+            "Обновление программы",
+            bg=PANEL_HOVER,
+            fg=TEXT,
+            font=(FONT, 9, "bold"),
+        ).pack(anchor="w")
+        make_label(
+            note.body,
+            "Внутри .exe нет сторонних pip-пакетов — только стандартная библиотека Python, "
+            "поэтому отдельные модули обновлять не нужно. Обновляется сама программа: "
+            "скачайте новый .exe и замените старый файл. Профили сайтов и config.json "
+            "останутся на месте.",
+            bg=PANEL_HOVER,
+            fg=MUTED,
+            font=(FONT, 9),
+            wraplength=600,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+        make_label(
+            note.body,
+            "Еженедельная сборка в GitHub Actions всегда использует свежие Python и PyInstaller.",
+            bg=PANEL_HOVER,
+            fg=DIM,
+            font=(FONT, 8),
+            wraplength=600,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 0))
+
+        make_label(
+            body,
+            f"config: {self.services.paths.config}",
+            bg=PANEL,
+            fg=DIM,
+            font=(MONO, 8),
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(14, 0))
+
+    # ------------------------------------------------------------------- load
 
     def _load(self) -> None:
         doh = self.config.doh
@@ -402,7 +541,21 @@ class SettingsDialog(tk.Toplevel):
         self.height_var.set(str(self.config.browser_height))
         self.port_var.set(str(self.config.proxy_port))
         self.close_browsers_var.set(self.config.close_browsers_on_exit)
+        self.auto_update_var.set(self.config.auto_check_updates)
+        self._update_detected()
         self._render_sites()
+
+    def _update_detected(self) -> None:
+        found = browser_candidates()
+        if not found:
+            text = "Браузеры не найдены: укажите путь вручную."
+        else:
+            names = ", ".join(browser.name for browser in found)
+            text = f"Найдено: {names}"
+        current = resolve_browser(self.config)
+        if current is not None and self.config.browser == "auto":
+            text += f". Сейчас будет использован: {current.name}"
+        self.detected_label.configure(text=text)
 
     def _render_sites(self) -> None:
         selected = self.tree.selection()
@@ -436,12 +589,7 @@ class SettingsDialog(tk.Toplevel):
         return None
 
     def _add_site(self) -> None:
-        SiteDialog(
-            self,
-            None,
-            {site.id for site in self.sites},
-            self._site_created,
-        )
+        SiteDialog(self, None, {site.id for site in self.sites}, self._site_created)
 
     def _site_created(self, site: Site) -> None:
         self.sites.append(site)
@@ -514,7 +662,11 @@ class SettingsDialog(tk.Toplevel):
         except OSError as exc:
             messagebox.showerror("Профиль", f"Не удалось удалить профиль:\n{exc}", parent=self)
             return
-        messagebox.showinfo("Профиль", "Профиль удалён. При следующем открытии вход потребуется снова.", parent=self)
+        messagebox.showinfo(
+            "Профиль",
+            "Профиль удалён. При следующем открытии вход потребуется снова.",
+            parent=self,
+        )
 
     def _browse_browser(self) -> None:
         path = filedialog.askopenfilename(
@@ -527,12 +679,13 @@ class SettingsDialog(tk.Toplevel):
         if path:
             self.path_var.set(path)
 
+    # -------------------------------------------------------------------- dns
+
     def _reset_dns(self) -> None:
         self.url_var.set(DEFAULT_DOH_URL)
         self.boot_var.set(", ".join(DEFAULT_BOOTSTRAP))
         self.fallback_var.set(True)
         self.timeout_var.set("8")
-        self.test_var.set("")
         self.test_label.configure(text="", fg=MUTED)
 
     def _collect_doh(self) -> DohSettings:
@@ -563,10 +716,7 @@ class SettingsDialog(tk.Toplevel):
                 resolver = DohResolver(doh, None)
                 ips, via = resolver.resolve_detailed("gemini.google.com", use_cache=False)
                 elapsed = time.monotonic() - started
-                text = (
-                    f"OK · {via} · gemini.google.com → {', '.join(ips)} "
-                    f"({elapsed:.2f} с)"
-                )
+                text = f"OK · {via} · gemini.google.com → {', '.join(ips)} ({elapsed:.2f} с)"
                 color = OK
             except Exception as exc:
                 elapsed = time.monotonic() - started
@@ -586,6 +736,98 @@ class SettingsDialog(tk.Toplevel):
                 pass
 
         threading.Thread(target=worker, name="doh-test", daemon=True).start()
+
+    # ---------------------------------------------------------------- updates
+
+    def _check_updates(self) -> None:
+        if self._update_checking:
+            return
+        self._update_checking = True
+        self.update_btn.configure(state="disabled")
+        self.update_status.configure(text="Проверяю GitHub…", fg=MUTED)
+
+        def worker() -> None:
+            release = None
+            error = ""
+            try:
+                release = updater.check()
+            except updater.UpdateError as exc:
+                error = str(exc)
+            except Exception as exc:  # pragma: no cover - defensive
+                error = f"{type(exc).__name__}: {exc}"
+
+            def finish() -> None:
+                if not self.winfo_exists():
+                    return
+                self._update_checking = False
+                self.update_btn.configure(state="normal")
+                if error:
+                    self.update_status.configure(text=f"Не удалось проверить: {error}", fg=ERROR)
+                    return
+                if release is None:
+                    self.update_status.configure(
+                        text=f"Установлена последняя версия {__version__}.", fg=OK
+                    )
+                    return
+                self._release = release
+                note = f" (есть файл {release.exe_name})" if release.exe_url else ""
+                self.update_status.configure(
+                    text=f"Доступна версия {release.version}{note}.", fg=OK
+                )
+                if release.exe_url:
+                    self.download_btn.configure(state="normal")
+
+            try:
+                self.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="update-check", daemon=True).start()
+
+    def _download_update(self) -> None:
+        release = self._release
+        if release is None or not release.exe_url:
+            return
+        self.download_btn.configure(state="disabled")
+        self.update_status.configure(text="Скачиваю обновление…", fg=MUTED)
+        target = self.services.paths.root / "updates"
+
+        def worker() -> None:
+            path = None
+            error = ""
+            try:
+                path = updater.download(release, target)
+            except (updater.UpdateError, OSError) as exc:
+                error = str(exc)
+
+            def finish() -> None:
+                if not self.winfo_exists():
+                    return
+                self.download_btn.configure(state="normal")
+                if error:
+                    self.update_status.configure(text=f"Ошибка загрузки: {error}", fg=ERROR)
+                    return
+                self.update_status.configure(text=f"Скачано: {path}", fg=OK)
+                if messagebox.askyesno(
+                    "Обновление",
+                    f"Файл скачан:\n{path}\n\nОткрыть папку? Замените старый GeminiDoH.exe "
+                    "новым и запустите его снова.",
+                    parent=self,
+                ):
+                    open_path(str(path.parent))
+                    open_path(str(path.parent))
+
+            try:
+                self.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="update-download", daemon=True).start()
+
+    def _open_releases(self) -> None:
+        webbrowser.open(f"https://github.com/{updater.repo_slug()}/releases")
+
+    # ------------------------------------------------------------------- save
 
     def _get_int(self, variable: tk.StringVar, title: str, low: int, high: int) -> int:
         try:
@@ -625,6 +867,8 @@ class SettingsDialog(tk.Toplevel):
             close_browsers_on_exit=self.close_browsers_var.get(),
             window_geometry=self.config.window_geometry,
             window_topmost=self.config.window_topmost,
+            auto_check_updates=self.auto_update_var.get(),
+            last_update_check=self.config.last_update_check,
         )
 
     def _save(self) -> None:
@@ -665,7 +909,7 @@ class SiteDialog(tk.Toplevel):
         self.on_ok = on_ok
         self.title("Изменить сайт" if site else "Новый сайт")
         self.configure(bg=BG)
-        self.geometry("540x350")
+        self.geometry("560x400")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -682,40 +926,56 @@ class SiteDialog(tk.Toplevel):
         self.enabled_var = tk.BooleanVar(value=site.enabled if site else True)
 
         outer = tk.Frame(self, bg=BG)
-        outer.pack(fill="both", expand=True, padx=22, pady=18)
-        outer.columnconfigure(1, weight=1)
+        outer.pack(fill="both", expand=True, padx=24, pady=20)
 
-        make_label(outer, "Название").grid(row=0, column=0, sticky="w", pady=(4, 6))
-        make_entry(outer, self.name_var).grid(row=0, column=1, sticky="ew", padx=(14, 0), pady=(4, 6))
+        make_label(outer, "Сайт", font=(FONT, 15, "bold"), fg=TEXT).pack(anchor="w", pady=(0, 12))
 
-        make_label(outer, "Адрес").grid(row=1, column=0, sticky="w", pady=6)
-        make_entry(outer, self.url_var).grid(row=1, column=1, sticky="ew", padx=(14, 0), pady=6)
+        card = Card(outer, padding=(20, 16))
+        card.pack(fill="x")
+        body = card.body
+        body.columnconfigure(1, weight=1)
+
+        make_label(body, "Название", bg=PANEL, font=(FONT, 10)).grid(
+            row=0, column=0, sticky="w", pady=(0, 8)
+        )
+        make_entry(body, self.name_var, width=34).grid(
+            row=0, column=1, sticky="ew", padx=(14, 0), pady=(0, 8)
+        )
+
+        make_label(body, "Адрес", bg=PANEL, font=(FONT, 10)).grid(
+            row=1, column=0, sticky="w", pady=(10, 8)
+        )
+        make_entry(body, self.url_var, width=34).grid(
+            row=1, column=1, sticky="ew", padx=(14, 0), pady=(10, 8)
+        )
         make_label(
-            outer,
+            body,
             "Например: https://chatgpt.com",
-            fg=MUTED,
-            font=(FONT, 9),
+            bg=PANEL,
+            fg=DIM,
+            font=(FONT, 8),
         ).grid(row=2, column=1, sticky="w", padx=(14, 0))
 
-        make_checkbutton(outer, "Закреплять окно поверх всех", self.pinned_var).grid(
-            row=3, column=1, sticky="w", padx=(14, 0), pady=(18, 4)
+        Switch(body, text="Закреплять окно поверх всех", variable=self.pinned_var).grid(
+            row=3, column=1, sticky="w", padx=(14, 0), pady=(16, 0)
         )
-        make_checkbutton(outer, "Показывать в списке", self.enabled_var).grid(
-            row=4, column=1, sticky="w", padx=(14, 0), pady=2
+        Switch(body, text="Показывать в списке", variable=self.enabled_var).grid(
+            row=4, column=1, sticky="w", padx=(14, 0), pady=(8, 0)
         )
 
         if site:
             make_label(
-                outer,
+                body,
                 f"Профиль: profiles/{site.id}",
-                fg=MUTED,
-                font=("Consolas", 9),
+                bg=PANEL,
+                fg=DIM,
+                font=(MONO, 8),
             ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(16, 0))
 
         buttons = tk.Frame(outer, bg=BG)
-        buttons.grid(row=6, column=0, columnspan=2, sticky="e", pady=(24, 0))
+        buttons.pack(fill="x", pady=(18, 0))
         FlatButton(buttons, "Сохранить", self._save, accent=True).pack(side="right")
-        FlatButton(buttons, "Отмена", self.destroy).pack(side="right", padx=(0, 8))
+        FlatButton(buttons, "Отмена", self.destroy, ghost=True).pack(side="right", padx=(0, 10))
 
         self.update_idletasks()
         x = parent.winfo_rootx() + max(0, (parent.winfo_width() - self.winfo_width()) // 2)
@@ -729,6 +989,7 @@ class SiteDialog(tk.Toplevel):
             self.focus_force()
         except tk.TclError:
             pass
+        dark_titlebar(self)
 
     def _save(self) -> None:
         name = self.name_var.get().strip()

@@ -23,6 +23,7 @@ from gemini_doh import APP_NAME, __version__  # noqa: E402
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 ICON = ROOT / "src" / "gemini_doh" / "assets" / "gemini-doh.ico"
+ICON_PNG = ROOT / "src" / "gemini_doh" / "assets" / "icon.png"
 VERSION_FILE = BUILD / "version_info.txt"
 EXE_NAME = "GeminiDoH"
 
@@ -93,7 +94,7 @@ def sha256(path: Path) -> str:
 
 
 def ensure_icon() -> None:
-    if ICON.exists():
+    if ICON.exists() and ICON_PNG.exists():
         return
     print("icon missing, generating…")
     subprocess.run([sys.executable, str(ROOT / "tools" / "make_icon.py")], check=True)
@@ -132,6 +133,8 @@ def build(skip_clean: bool = False) -> int:
         str(ROOT / "src"),
         "--add-data",
         f"{ICON}{os.pathsep}assets",
+        "--add-data",
+        f"{ICON_PNG}{os.pathsep}assets",
         "--distpath",
         str(DIST),
         "--workpath",

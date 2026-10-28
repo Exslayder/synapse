@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "doh": {
     "url": "https://dns.dagami.ru/dns-query",
     "bootstrap_ips": [
@@ -20,6 +20,8 @@
   "close_browsers_on_exit": true,
   "window_geometry": "",
   "window_topmost": false,
+  "auto_check_updates": true,
+  "last_update_check": "",
   "sites": [
     {
       "id": "gemini",

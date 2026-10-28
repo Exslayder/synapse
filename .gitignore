@@ -15,12 +15,14 @@ profiles/
 logs/
 app.lock
 *.log
+updates/
 
 # Editors / OS
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Local tooling
 .pytest_cache/

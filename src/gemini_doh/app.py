@@ -36,6 +36,21 @@ def configure_dpi() -> None:
         pass
 
 
+def attach_console() -> None:
+    """Give CLI flags a console in the windowed (--noconsole) EXE build."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        if not ctypes.windll.kernel32.AttachConsole(-1):
+            return
+        codepage = int(ctypes.windll.kernel32.GetConsoleOutputCP()) or 65001
+        encoding = "utf-8" if codepage == 65001 else f"cp{codepage}"
+        sys.stdout = open("CONOUT$", "w", encoding=encoding, errors="replace", buffering=1)  # noqa: SIM115
+        sys.stderr = open("CONOUT$", "w", encoding=encoding, errors="replace", buffering=1)  # noqa: SIM115
+    except Exception:
+        pass
+
+
 def pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -145,6 +160,24 @@ def run_check(config: AppConfig, logger: AppLogger) -> int:
     return 0 if 200 <= response.status < 400 else 1
 
 
+def run_update_check() -> int:
+    from . import updater
+
+    try:
+        release = updater.check()
+    except updater.UpdateError as exc:
+        print(f"update=fail {exc}")
+        return 1
+    if release is None:
+        print(f"update=none current={__version__}")
+        return 0
+    print(f"update=available current={__version__} latest={release.version}")
+    print(f"page={release.url}")
+    if release.exe_url:
+        print(f"exe={release.exe_url}")
+    return 0
+
+
 def _install_exception_hooks(logger: AppLogger) -> None:
     def main_hook(exc_type, exc, _tb):
         logger.error("Необработанная ошибка", exc)
@@ -174,13 +207,23 @@ def _show_gui(services: Services, log_queue: queue.Queue[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="GeminiDoH", description="Gemini DoH browser hub")
     parser.add_argument("--check", action="store_true", help="проверить DNS/TLS и выйти")
+    parser.add_argument(
+        "--check-updates",
+        action="store_true",
+        help="проверить релизы на GitHub и выйти",
+    )
     parser.add_argument("--version", action="store_true", help="показать версию")
     parser.add_argument("--config", default=None, help="путь к config.json")
     args = parser.parse_args(argv)
 
     if args.version:
+        attach_console()
         print(f"{APP_NAME} {__version__}")
         return 0
+
+    if args.check_updates:
+        attach_console()
+        return run_update_check()
 
     configure_dpi()
     paths = AppPaths.runtime(args.config)
@@ -199,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     _install_exception_hooks(logger)
 
     if args.check:
+        attach_console()
         return run_check(config, logger)
 
     if not acquire_lock(paths.lock):

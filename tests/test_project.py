@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import struct
 import unittest
 from pathlib import Path
@@ -35,6 +36,13 @@ class ProjectFilesTests(unittest.TestCase):
         self.assertTrue(icon.is_file())
         self.assertEqual(icon.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
 
+    def test_pyproject_version_matches_package(self) -> None:
+        text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertEqual(match.group(1), __version__)
+
     def test_ci_and_build_files_exist(self) -> None:
         for relative in (
             ".github/workflows/build.yml",
@@ -43,6 +51,8 @@ class ProjectFilesTests(unittest.TestCase):
             "requirements-build.txt",
             "README.md",
             "LICENSE",
+            "docs/PUBLISHING.md",
+            "assets/screenshot-main.png",
         ):
             self.assertTrue((ROOT / relative).is_file(), relative)
 

@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import threading
 
-from .browser import BrowserLauncher, LaunchResult, PinManager, close_site_windows, resolve_browser
+from .browser import (
+    BrowserLauncher,
+    LaunchResult,
+    PinManager,
+    close_site_windows,
+    focus_pids,
+    process_tree,
+    resolve_browser,
+)
 from .config import AppConfig, ConfigStore, Site
 from .doh import DohResolver
 from .logging_setup import AppLogger
@@ -34,9 +42,9 @@ class Services:
             logger.info,
         )
         self.launcher = BrowserLauncher(paths.profiles, logger.info)
-        self.pins = PinManager(logger.info)
+        self.pins = PinManager(logger.info, self.launcher.root_pids)
         self.pins.start()
-        self.pins.set_pinned(self._pinned_mapping(config))
+        self.pins.set_pinned(self._pinned_ids(config))
         self._closed = False
         self._lock = threading.Lock()
 
@@ -44,12 +52,15 @@ class Services:
     def doh_url(self) -> str:
         return self.resolver.endpoint.url
 
-    def _pinned_mapping(self, config: AppConfig) -> dict[str, list[str]]:
-        return {site.id: site.match_tokens() for site in config.sites if site.pinned and site.enabled}
+    def _pinned_ids(self, config: AppConfig) -> set[str]:
+        return {site.id for site in config.sites if site.pinned and site.enabled}
 
     def open_site(self, site: Site) -> LaunchResult:
         if not site.enabled:
             return LaunchResult(False, f"{site.name} отключён в настройках.")
+        root = self.launcher.root_pids().get(site.id)
+        if root and focus_pids(process_tree(root)):
+            return LaunchResult(True, f"{site.name}: окно уже открыто", root)
         return self.launcher.launch(site, self.port, self.config)
 
     def apply_config(self, new_config: AppConfig) -> list[str]:
@@ -65,12 +76,12 @@ class Services:
 
         self.resolver.configure(new_config.doh)
         self.server.allowed_ports = list(new_config.allowed_ports)
-        self.pins.set_pinned(self._pinned_mapping(new_config))
+        self.pins.set_pinned(self._pinned_ids(new_config))
         self.config = new_config
 
         browser = resolve_browser(new_config)
         if browser is None:
-            warnings.append("Браузер не найден. Укажите путь к Edge/Chrome в настройках.")
+            warnings.append("Браузер не найден. Укажите путь к Chrome или Firefox в настройках.")
         return warnings
 
     def shutdown(self, close_browsers: bool) -> None:

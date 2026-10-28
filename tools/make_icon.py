@@ -45,11 +45,11 @@ def _pixel(x: float, y: float) -> tuple[int, int, int, int]:
     if not _inside_round_rect(x, y, 0.012, 0.235):
         return (0, 0, 0, 0)
 
-    background = _mix((31, 36, 26), (15, 17, 13), y)
+    background = _mix((24, 28, 40), (11, 13, 20), y)
     if not _inside_round_rect(x, y, 0.045, 0.205):
-        background = _mix(background, (78, 86, 62), 0.55)
+        background = _mix(background, (56, 66, 96), 0.55)
 
-    accent = _mix((236, 255, 112), (170, 219, 49), y)
+    accent = _mix((178, 190, 255), (109, 125, 240), y)
 
     dx = x - 0.5
     dy = y - 0.485
@@ -64,7 +64,7 @@ def _pixel(x: float, y: float) -> tuple[int, int, int, int]:
 
     # A small highlight keeps the icon readable at large sizes.
     if distance < 0.17 and y < 0.46:
-        highlight = _mix(background, (48, 55, 40), 0.35)
+        highlight = _mix(background, (36, 43, 62), 0.35)
         return (*highlight, 255)
     return (*background, 255)
 
@@ -177,8 +177,10 @@ def write_png(path: Path, size: int = 256) -> None:
 def main() -> int:
     write_ico(ASSETS / "gemini-doh.ico")
     write_png(DOC_ASSETS / "icon.png")
+    write_png(ASSETS / "icon.png")
     print(f"icon: {ASSETS / 'gemini-doh.ico'}")
     print(f"png:  {DOC_ASSETS / 'icon.png'}")
+    print(f"png:  {ASSETS / 'icon.png'}")
     return 0
 
 
