@@ -1,0 +1,7 @@
+{
+  "include": ["src", "tests", "run.py", "build.py", "tools"],
+  "extraPaths": ["src"],
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Windows",
+  "reportMissingImports": "error"
+}
