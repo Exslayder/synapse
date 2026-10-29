@@ -8,8 +8,28 @@ from pathlib import Path
 from tests._bootstrap import SRC  # noqa: F401
 
 from gemini_doh import __version__
+from gemini_doh.ui.main_window import plural_sites
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class TextTests(unittest.TestCase):
+    def test_site_plural(self) -> None:
+        cases = {
+            0: "сайтов",
+            1: "сайт",
+            2: "сайта",
+            4: "сайта",
+            5: "сайтов",
+            11: "сайтов",
+            21: "сайт",
+            22: "сайта",
+            25: "сайтов",
+            111: "сайтов",
+            112: "сайтов",
+        }
+        for count, expected in cases.items():
+            self.assertEqual(plural_sites(count), expected, count)
 
 
 class ProjectFilesTests(unittest.TestCase):

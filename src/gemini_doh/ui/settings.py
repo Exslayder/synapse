@@ -29,7 +29,6 @@ from ..config import (
 )
 from ..doh import DohResolver
 from .theme import (
-    ACCENT,
     BG,
     BORDER,
     DIM,
@@ -43,7 +42,7 @@ from .theme import (
     TEXT,
     dark_titlebar,
 )
-from .widgets import Card, FlatButton, Switch, make_entry, make_label
+from .widgets import Card, FlatButton, make_checkbutton, make_entry, make_label
 
 BROWSER_CHOICES = [
     ("Авто — Chrome, затем Firefox", "auto"),
@@ -65,26 +64,18 @@ def open_path(path: str) -> None:
         pass
 
 
-def make_spinbox(parent: tk.Misc, variable: tk.Variable, low: int, high: int, step: int, width: int) -> tk.Spinbox:
-    return tk.Spinbox(
+def make_spinbox(
+    parent: tk.Misc, variable: tk.Variable, low: int, high: int, step: int, width: int
+) -> ttk.Spinbox:
+    return ttk.Spinbox(
         parent,
         from_=low,
         to=high,
         increment=step,
         textvariable=variable,
         width=width,
-        bg=PANEL_HOVER,
-        fg=TEXT,
-        buttonbackground=PANEL_HOVER,
-        insertbackground=ACCENT,
-        relief="flat",
-        bd=0,
-        highlightthickness=1,
-        highlightbackground=BORDER,
-        highlightcolor=ACCENT,
+        style="TSpinbox",
         font=(FONT, 10),
-        disabledbackground=PANEL,
-        disabledforeground=MUTED,
     )
 
 
@@ -247,11 +238,11 @@ class SettingsDialog(tk.Toplevel):
             wraplength=520,
         ).grid(row=3, column=1, sticky="w", padx=(16, 0))
 
-        Switch(
+        make_checkbutton(
             body,
-            text="Резервный DNS/53, если DoH недоступен",
-            variable=self.fallback_var,
-        ).grid(row=4, column=1, sticky="w", padx=(16, 0), pady=(16, 0))
+            "Резервный DNS/53, если DoH недоступен",
+            self.fallback_var,
+        ).grid(row=4, column=1, sticky="w", padx=(16, 0), pady=(12, 0))
 
         make_label(body, "Таймаут, сек", bg=PANEL, font=(FONT, 10)).grid(
             row=5, column=0, sticky="w", pady=(18, 0)
@@ -345,11 +336,11 @@ class SettingsDialog(tk.Toplevel):
             row=5, column=1, sticky="w", padx=(16, 0), pady=(16, 0)
         )
 
-        Switch(
+        make_checkbutton(
             body,
-            text="Закрывать окна сайтов при выходе",
-            variable=self.close_browsers_var,
-        ).grid(row=6, column=1, sticky="w", padx=(16, 0), pady=(18, 0))
+            "Закрывать окна сайтов при выходе",
+            self.close_browsers_var,
+        ).grid(row=6, column=1, sticky="w", padx=(16, 0), pady=(12, 0))
 
         make_label(
             body,
@@ -420,7 +411,15 @@ class SettingsDialog(tk.Toplevel):
             style="Vertical.TScrollbar",
         )
         scrollbar.grid(row=0, column=1, sticky="ns")
-        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        def on_tree_scroll(first: str, last: str) -> None:
+            scrollbar.set(first, last)
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                scrollbar.grid_remove()
+            else:
+                scrollbar.grid()
+
+        self.tree.configure(yscrollcommand=on_tree_scroll)
 
         buttons = tk.Frame(body, bg=PANEL)
         buttons.grid(row=2, column=0, sticky="w", pady=(12, 0))
@@ -458,17 +457,19 @@ class SettingsDialog(tk.Toplevel):
             row=1, column=1, sticky="w", padx=(16, 0), pady=(8, 0)
         )
 
-        Switch(
+        make_checkbutton(
             body,
-            text="Проверять обновления при запуске",
-            variable=self.auto_update_var,
-        ).grid(row=2, column=1, sticky="w", padx=(16, 0), pady=(16, 0))
+            "Проверять обновления при запуске",
+            self.auto_update_var,
+        ).grid(row=2, column=1, sticky="w", padx=(16, 0), pady=(12, 0))
 
         actions = tk.Frame(body, bg=PANEL)
         actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(18, 0))
         self.update_btn = FlatButton(actions, "Проверить сейчас", self._check_updates)
         self.update_btn.pack(side="left")
-        self.download_btn = FlatButton(actions, "Скачать .exe", self._download_update, accent=True)
+        self.download_btn = FlatButton(
+            actions, "Скачать .exe", self._download_update, ghost=True
+        )
         self.download_btn.pack(side="left", padx=(10, 0))
         self.download_btn.configure(state="disabled")
         FlatButton(actions, "Страница релизов", self._open_releases, ghost=True).pack(
@@ -775,6 +776,7 @@ class SettingsDialog(tk.Toplevel):
                     text=f"Доступна версия {release.version}{note}.", fg=OK
                 )
                 if release.exe_url:
+                    self.download_btn.set_active(True)
                     self.download_btn.configure(state="normal")
 
             try:
@@ -814,7 +816,6 @@ class SettingsDialog(tk.Toplevel):
                     "новым и запустите его снова.",
                     parent=self,
                 ):
-                    open_path(str(path.parent))
                     open_path(str(path.parent))
 
             try:
@@ -956,11 +957,11 @@ class SiteDialog(tk.Toplevel):
             font=(FONT, 8),
         ).grid(row=2, column=1, sticky="w", padx=(14, 0))
 
-        Switch(body, text="Закреплять окно поверх всех", variable=self.pinned_var).grid(
-            row=3, column=1, sticky="w", padx=(14, 0), pady=(16, 0)
+        make_checkbutton(body, "Закреплять окно поверх всех", self.pinned_var).grid(
+            row=3, column=1, sticky="w", padx=(14, 0), pady=(12, 0)
         )
-        Switch(body, text="Показывать в списке", variable=self.enabled_var).grid(
-            row=4, column=1, sticky="w", padx=(14, 0), pady=(8, 0)
+        make_checkbutton(body, "Показывать в списке", self.enabled_var).grid(
+            row=4, column=1, sticky="w", padx=(14, 0), pady=(4, 0)
         )
 
         if site:

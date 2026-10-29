@@ -133,11 +133,50 @@ def setup_ttk(root: tk.Misc) -> ttk.Style:
         troughcolor=BG,
         bordercolor=BG,
         arrowcolor=BG,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
         arrowsize=1,
         width=10,
         relief="flat",
         borderwidth=0,
     )
-    style.map("Vertical.TScrollbar", background=[("active", ACCENT)])
+    style.map("Vertical.TScrollbar", background=[("active", BORDER_HI)])
+    style.configure(
+        "Log.Vertical.TScrollbar",
+        background=BORDER_HI,
+        troughcolor=PANEL,
+        bordercolor=PANEL,
+        arrowcolor=PANEL,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
+        arrowsize=1,
+        width=8,
+        relief="flat",
+        borderwidth=0,
+    )
+    style.map("Log.Vertical.TScrollbar", background=[("active", BORDER_HI)])
+    style.configure(
+        "TSpinbox",
+        fieldbackground=PANEL_HOVER,
+        background=PANEL_HOVER,
+        foreground=TEXT,
+        arrowcolor=MUTED,
+        bordercolor=BORDER,
+        lightcolor=PANEL_HOVER,
+        darkcolor=PANEL_HOVER,
+        selectbackground=ACCENT_SOFT,
+        selectforeground=TEXT,
+        padding=(9, 5),
+        relief="flat",
+        borderwidth=0,
+        arrowsize=11,
+    )
+    style.map(
+        "TSpinbox",
+        fieldbackground=[("readonly", PANEL_HOVER), ("focus", PANEL_HOVER)],
+        foreground=[("disabled", DIM)],
+        bordercolor=[("focus", ACCENT)],
+        arrowcolor=[("active", ACCENT)],
+    )
     style.configure("TSeparator", background=BORDER)
     return style

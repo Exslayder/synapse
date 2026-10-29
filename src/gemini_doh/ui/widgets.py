@@ -1,20 +1,29 @@
-"""Small Tk helpers used by the main window and settings dialog."""
+"""Native Tk widgets styled for the dark theme.
+
+The first version of the redesign drew buttons, cards and toggles on a
+``tk.Canvas``.  Tk canvas text is rendered without ClearType and cannot be
+antialiased, so the result looked fuzzy and the custom hit areas made focus and
+clipboard behaviour unpredictable.  Everything here is built from native
+widgets instead: Tk lays out and renders their text itself, hover states are
+plain colour changes, and standard copy/paste works as expected.
+"""
 
 from __future__ import annotations
 
 import tkinter as tk
-import tkinter.font as tkfont
 from tkinter import ttk
 
 from .theme import (
     ACCENT,
     ACCENT_DOWN,
     ACCENT_HOVER,
+    ACCENT_SOFT,
     ACCENT_TEXT,
     BG,
     BORDER,
     BORDER_HI,
     DIM,
+    ERROR,
     FONT,
     MUTED,
     PANEL,
@@ -43,7 +52,7 @@ def rounded_rect(
     radius: float,
     **kwargs,
 ) -> int:
-    """Draw a rounded rectangle as a smoothed polygon."""
+    """Kept for the few purely decorative shapes (e.g. the status dot)."""
     radius = max(0.0, min(radius, (x2 - x1) / 2, (y2 - y1) / 2))
     points = [
         x1 + radius, y1,
@@ -62,165 +71,174 @@ def rounded_rect(
     return canvas.create_polygon(points, smooth=True, splinesteps=24, **kwargs)
 
 
-class FlatButton(tk.Canvas):
-    """Rounded button drawn on a canvas (keeps the app dependency-free)."""
+def _popup_menu(parent: tk.Misc) -> tk.Menu:
+    return tk.Menu(
+        parent,
+        tearoff=0,
+        bg=PANEL,
+        fg=TEXT,
+        activebackground=ACCENT_SOFT,
+        activeforeground=TEXT,
+        disabledforeground=DIM,
+        bd=0,
+        relief="flat",
+        font=(FONT, 9),
+    )
+
+
+def _popup(menu: tk.Menu, event) -> None:
+    try:
+        menu.tk_popup(event.x_root, event.y_root)
+    finally:
+        try:
+            menu.grab_release()
+        except tk.TclError:
+            pass
+
+
+def attach_entry_menu(entry: tk.Entry, readonly: bool = False) -> None:
+    """Right-click menu + Ctrl+A for text fields (Tk has no menu by default)."""
+    menu = _popup_menu(entry)
+
+    def copy() -> None:
+        try:
+            entry.event_generate("<<Copy>>")
+        except tk.TclError:
+            pass
+
+    def cut() -> None:
+        try:
+            entry.event_generate("<<Cut>>")
+        except tk.TclError:
+            pass
+
+    def paste() -> None:
+        try:
+            entry.event_generate("<<Paste>>")
+        except tk.TclError:
+            pass
+
+    def select_all() -> None:
+        entry.selection_range(0, "end")
+        entry.icursor("end")
+
+    if not readonly:
+        menu.add_command(label="Вырезать", command=cut)
+    menu.add_command(label="Копировать", command=copy)
+    if not readonly:
+        menu.add_command(label="Вставить", command=paste)
+    menu.add_separator()
+    menu.add_command(label="Выделить всё", command=select_all)
+
+    entry.bind("<Button-3>", lambda event: _popup(menu, event), add="+")
+    entry.bind("<Control-a>", lambda _event: (select_all(), "break")[1], add="+")
+
+
+def attach_text_menu(text: tk.Text, on_clear=None) -> None:
+    """Right-click menu for the log: copy, select all, optionally clear."""
+    menu = _popup_menu(text)
+
+    def copy() -> None:
+        try:
+            text.event_generate("<<Copy>>")
+        except tk.TclError:
+            pass
+
+    def select_all() -> None:
+        text.tag_add("sel", "1.0", "end-1c")
+        text.mark_set("insert", "1.0")
+        text.see("end")
+
+    menu.add_command(label="Копировать", command=copy)
+    menu.add_command(label="Выделить всё", command=select_all)
+    if on_clear is not None:
+        menu.add_separator()
+        menu.add_command(label="Очистить журнал", command=on_clear)
+
+    text.bind("<Button-3>", lambda event: _popup(menu, event), add="+")
+    text.bind("<Control-a>", lambda _event: (select_all(), "break")[1], add="+")
+
+
+class FlatButton(tk.Button):
+    """Flat native button: crisp ClearType text, centred by Tk itself."""
 
     def __init__(
         self,
         parent: tk.Misc,
         text: str,
-        command,
+        command=None,
         accent: bool = False,
         small: bool = False,
         ghost: bool = False,
         **kwargs,
     ):
-        self._text = text
-        self._command = command
-        self._accent = accent
-        self._ghost = ghost
-        self._small = small
-        self._enabled = True
-        self._hover = False
+        self._accent = bool(accent)
+        self._ghost = bool(ghost) and not accent
+        self._small = bool(small)
         self._surface = parent_bg(parent)
-        height = 30 if small else 38
-        self._font = (FONT, 9, "bold") if small else (FONT, 10, "bold" if accent else "normal")
+        self._hover = False
         super().__init__(
             parent,
-            height=height,
-            bg=self._surface,
-            highlightthickness=0,
+            text=text,
+            command=command,
             bd=0,
+            relief="flat",
+            highlightthickness=1,
             cursor="hand2",
-            **{k: v for k, v in kwargs.items() if k not in {"state", "font"}},
+            font=(FONT, 9, "bold") if small else ((FONT, 10, "bold") if accent else (FONT, 10)),
+            padx=10 if small else 14,
+            pady=3 if small else 6,
+            **kwargs,
         )
-        self._resize()
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        self.bind("<ButtonPress-1>", self._on_press)
-        self.bind("<ButtonRelease-1>", self._on_release)
-        self.bind("<Configure>", lambda _e: self._draw())
+        self.bind("<Enter>", self._on_enter, add="+")
+        self.bind("<Leave>", self._on_leave, add="+")
+        self._sync_colors()
 
     def _palette(self) -> tuple[str, str, str]:
-        if not self._enabled:
-            return (PANEL_HOVER, DIM, BORDER)
         if self._accent:
-            fill = ACCENT_DOWN if self._pressed else (ACCENT_HOVER if self._hover else ACCENT)
-            return (fill, ACCENT_TEXT, fill)
+            fill = ACCENT_HOVER if self._hover else ACCENT
+            return fill, ACCENT_TEXT, fill
         if self._ghost:
-            if self._hover:
-                return (PANEL_HOVER, TEXT, BORDER_HI)
-            return (self._surface, MUTED, BORDER)
+            fill = PANEL_HOVER if self._hover else self._surface
+            return fill, TEXT if self._hover else MUTED, BORDER_HI if self._hover else BORDER
         fill = BORDER_HI if self._hover else PANEL_HOVER
-        return (fill, TEXT, BORDER)
+        return fill, TEXT, BORDER
 
-    @property
-    def _pressed(self) -> bool:
-        return getattr(self, "_is_pressed", False)
-
-    def _measure(self) -> int:
-        font = tkfont.Font(family=self._font[0], size=self._font[1], weight=self._font[2])
-        return font.measure(self._text) + (24 if self._small else 36)
-
-    def _resize(self) -> None:
-        self.configure(width=self._measure())
-        self.after_idle(self._redraw_if_ready)
-
-    def _draw(self) -> None:
-        self.delete("all")
-        width = max(int(self.winfo_width()), self._measure())
-        height = int(self.winfo_height())
+    def _sync_colors(self) -> None:
         fill, foreground, outline = self._palette()
-        radius = 10 if self._small else 12
-        rounded_rect(
-            self,
-            1,
-            1,
-            width - 1,
-            height - 1,
-            radius,
-            fill=fill,
-            outline=outline or fill,
-            width=1,
-        )
-        self.create_text(
-            width / 2,
-            height / 2 + 1,
-            text=self._text,
-            fill=foreground,
-            font=self._font,
-        )
-
-    def _redraw_if_ready(self) -> None:
-        if self.winfo_width() > 1:
-            self._draw()
+        try:
+            self.configure(
+                bg=fill,
+                fg=foreground,
+                activebackground=ACCENT_DOWN if self._accent else fill,
+                activeforeground=foreground,
+                highlightbackground=outline,
+                highlightcolor=ACCENT_HOVER if self._accent else ACCENT,
+                disabledforeground=DIM,
+            )
+        except tk.TclError:
+            pass
 
     def _on_enter(self, _event=None) -> None:
-        if not self._enabled:
+        if str(self.cget("state")) == "disabled":
             return
         self._hover = True
-        self._draw()
+        self._sync_colors()
 
     def _on_leave(self, _event=None) -> None:
         self._hover = False
-        self._is_pressed = False
-        self._draw()
-
-    def _on_press(self, _event=None) -> None:
-        if not self._enabled:
-            return
-        self._is_pressed = True
-        self._draw()
-
-    def _on_release(self, event=None) -> None:
-        was_pressed = self._pressed
-        self._is_pressed = False
-        self._draw()
-        if not self._enabled or not was_pressed:
-            return
-        if event is not None and not (0 <= event.x <= self.winfo_width() and 0 <= event.y <= self.winfo_height()):
-            return
-        if callable(self._command):
-            self._command()
+        self._sync_colors()
 
     def set_active(self, active: bool) -> None:
-        """Switch between the accent (selected) and ghost (idle) look."""
-        self._accent = active
+        """Used by the segmented tabs: selected = accent, otherwise ghost."""
+        self._accent = bool(active)
         self._ghost = not active
-        self._draw()
-
-    def configure(self, cnf=None, **kwargs):
-        if cnf:
-            kwargs.update(cnf)
-        redraw = False
-        if "state" in kwargs:
-            self._enabled = kwargs.pop("state") != "disabled"
-            redraw = True
-        if "text" in kwargs:
-            self._text = str(kwargs.pop("text"))
-            self._resize()
-            redraw = True
-        if "command" in kwargs:
-            self._command = kwargs.pop("command")
-        if kwargs:
-            super().configure(**kwargs)
-        if redraw:
-            self.after_idle(self._redraw_if_ready)
-        return None
-
-    config = configure
-
-    def cget(self, key):
-        if key == "state":
-            return "normal" if self._enabled else "disabled"
-        return super().cget(key)
+        self._hover = False
+        self._sync_colors()
 
 
-class Switch(tk.Canvas):
-    """Pill toggle with an optional caption."""
-
-    TRACK_W = 38
-    TRACK_H = 21
+class Switch(tk.Checkbutton):
+    """Toggle chip with a native label (no canvas, no pixelated text)."""
 
     def __init__(
         self,
@@ -231,67 +249,69 @@ class Switch(tk.Canvas):
         **kwargs,
     ):
         self.variable = variable if variable is not None else tk.BooleanVar(value=False)
-        self._command = command
-        self._text = text
         self._surface = parent_bg(parent)
-        self._font = (FONT, 9)
-        label_width = 0
-        if text:
-            font = tkfont.Font(family=FONT, size=9)
-            label_width = font.measure(text) + 9
         super().__init__(
             parent,
-            width=self.TRACK_W + label_width + 2,
-            height=24,
-            bg=self._surface,
-            highlightthickness=0,
+            text=text,
+            variable=self.variable,
+            command=command,
+            indicatoron=False,
             bd=0,
+            relief="flat",
+            offrelief="flat",
+            overrelief="flat",
+            highlightthickness=1,
+            padx=9,
+            pady=3,
+            font=(FONT, 9),
             cursor="hand2",
             takefocus=True,
             **kwargs,
         )
-        self.variable.trace_add("write", lambda *_args: self._draw())
-        self.bind("<Button-1>", self._toggle)
-        self.bind("<space>", self._toggle)
-        self.bind("<Configure>", lambda _e: self._draw())
+        self.variable.trace_add("write", lambda *_args: self._sync())
+        self.bind("<Enter>", lambda _e: self._hover(True), add="+")
+        self.bind("<Leave>", lambda _e: self._hover(False), add="+")
+        self._sync()
 
-    def _toggle(self, _event=None) -> str:
-        self.variable.set(not bool(self.variable.get()))
-        if callable(self._command):
-            self._command()
-        return "break"
+    def _on(self) -> bool:
+        return bool(self.variable.get())
 
-    def _draw(self) -> None:
-        self.delete("all")
-        on = bool(self.variable.get())
-        track = ACCENT if on else BORDER_HI
-        knob = ACCENT_TEXT if on else MUTED
-        x1, y1 = 1, 3
-        x2, y2 = 1 + self.TRACK_W, 3 + self.TRACK_H
-        rounded_rect(self, x1, y1, x2, y2, self.TRACK_H / 2, fill=track, outline=track)
-        radius = (self.TRACK_H - 6) / 2
-        cx = (x2 - 4 - radius) if on else (x1 + 4 + radius)
-        self.create_oval(
-            cx - radius,
-            y1 + 3,
-            cx + radius,
-            y1 + 3 + 2 * radius,
-            fill=knob,
-            outline=knob,
-        )
-        if self._text:
-            self.create_text(
-                x2 + 8,
-                3 + self.TRACK_H / 2,
-                text=self._text,
-                anchor="w",
-                fill=TEXT if on else MUTED,
-                font=self._font,
+    def _hover(self, state: bool) -> None:
+        if str(self.cget("state")) == "disabled":
+            return
+        if self._on():
+            fill = ACCENT_HOVER if state else ACCENT
+            self.configure(bg=fill, selectcolor=fill)
+        else:
+            self.configure(highlightbackground=ACCENT if state else BORDER)
+
+    def _sync(self) -> None:
+        if self._on():
+            self.configure(
+                bg=ACCENT,
+                fg=ACCENT_TEXT,
+                activebackground=ACCENT_HOVER,
+                activeforeground=ACCENT_TEXT,
+                selectcolor=ACCENT,
+                highlightbackground=ACCENT,
+                highlightcolor=ACCENT_HOVER,
+                disabledforeground=DIM,
+            )
+        else:
+            self.configure(
+                bg=PANEL_HOVER,
+                fg=MUTED,
+                activebackground=BORDER_HI,
+                activeforeground=TEXT,
+                selectcolor=PANEL_HOVER,
+                highlightbackground=BORDER,
+                highlightcolor=ACCENT,
+                disabledforeground=DIM,
             )
 
 
 class Card(tk.Frame):
-    """Rounded panel that hosts arbitrary widgets in ``body``."""
+    """Flat panel with a one-pixel border that hosts widgets in ``body``."""
 
     def __init__(
         self,
@@ -304,118 +324,185 @@ class Card(tk.Frame):
         fill_height: bool = False,
         **kwargs,
     ):
-        surface = surface or parent_bg(parent)
-        super().__init__(parent, bg=surface, **kwargs)
-        self._pad = padding
-        self._radius = radius
-        self._fill = fill
-        self._border = border
-        self._fill_height = fill_height
-        self.canvas = tk.Canvas(self, bg=surface, highlightthickness=0, bd=0)
-        self.canvas.pack(fill="both", expand=True)
-        self.body = tk.Frame(self.canvas, bg=fill)
-        self._window = self.canvas.create_window(
-            padding[0], padding[1], window=self.body, anchor="nw"
+        super().__init__(
+            parent,
+            bg=fill,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=border,
+            highlightcolor=border,
+            **kwargs,
         )
-        self._shape = None
-        self.canvas.bind("<Configure>", self._on_canvas)
-        self.body.bind("<Configure>", self._on_body)
-
-    def _on_canvas(self, event) -> None:
-        pad_x, pad_y = self._pad
-        width = max(1, event.width - 2 * pad_x)
-        if self._fill_height:
-            height = max(1, event.height - 2 * pad_y)
-            self.canvas.itemconfigure(self._window, width=width, height=height)
+        self.body = tk.Frame(self, bg=fill)
+        if fill_height:
+            self.body.pack(fill="both", expand=True, padx=padding[0], pady=padding[1])
         else:
-            self.canvas.itemconfigure(self._window, width=width)
-        self._draw(event.width, event.height)
-
-    def _on_body(self, _event=None) -> None:
-        if self._fill_height or self.canvas.winfo_width() <= 1:
-            return
-        pad_x, pad_y = self._pad
-        height = self.body.winfo_reqheight() + 2 * pad_y
-        if int(self.canvas.cget("height")) != height:
-            self.canvas.configure(height=height)
-
-    def _draw(self, width: int, height: int) -> None:
-        self.canvas.delete("card")
-        rounded_rect(
-            self.canvas,
-            1,
-            1,
-            max(2, width - 1),
-            max(2, height - 1),
-            self._radius,
-            fill=self._fill,
-            outline=self._border,
-            width=1,
-            tags="card",
-        )
-        self.canvas.tag_lower("card")
+            self.body.pack(fill="x", padx=padding[0], pady=padding[1])
 
 
 class Field(tk.Frame):
-    """Rounded text field (the Entry lives inside)."""
+    """Text field: a native Entry inside a one-pixel focus frame."""
 
-    def __init__(self, parent: tk.Misc, textvariable: tk.Variable, width: int = 32, **kwargs):
-        surface = parent_bg(parent)
-        super().__init__(parent, bg=surface, **kwargs)
-        self.canvas = tk.Canvas(self, bg=surface, height=34, highlightthickness=0, bd=0)
-        self.canvas.pack(fill="both", expand=True)
+    def __init__(
+        self,
+        parent: tk.Misc,
+        textvariable: tk.Variable,
+        width: int = 32,
+        readonly: bool = False,
+        **kwargs,
+    ):
+        super().__init__(
+            parent,
+            bg=PANEL_HOVER,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=ACCENT,
+            **kwargs,
+        )
         self.entry = tk.Entry(
-            self.canvas,
+            self,
             textvariable=textvariable,
+            width=width,
             bg=PANEL_HOVER,
             fg=TEXT,
             disabledbackground=PANEL_HOVER,
             disabledforeground=MUTED,
+            readonlybackground=PANEL_HOVER,
             insertbackground=ACCENT,
+            selectbackground=ACCENT_SOFT,
+            selectforeground=TEXT,
             relief="flat",
             bd=0,
             highlightthickness=0,
             font=(FONT, 10),
+            state="readonly" if readonly else "normal",
         )
-        self._window = self.canvas.create_window(11, 17, window=self.entry, anchor="w")
-        self.canvas.configure(width=max(120, width * 7))
-        self._focused = False
-        self.canvas.bind("<Configure>", self._draw)
+        self.entry.pack(fill="both", expand=True, padx=9, pady=5)
         self.entry.bind("<FocusIn>", self._on_focus, add="+")
         self.entry.bind("<FocusOut>", self._on_blur, add="+")
-        self.canvas.bind("<Button-1>", lambda _e: self.entry.focus_set())
+        attach_entry_menu(self.entry, readonly=readonly)
 
     def _on_focus(self, _event=None) -> None:
-        self._focused = True
-        self._draw()
+        self.configure(highlightbackground=ACCENT)
 
     def _on_blur(self, _event=None) -> None:
-        self._focused = False
-        self._draw()
-
-    def _draw(self, _event=None) -> None:
-        self.canvas.delete("field")
-        width = max(int(self.canvas.winfo_width()), 60)
-        height = int(self.canvas.winfo_height() or 34)
-        outline = ACCENT if self._focused else BORDER
-        rounded_rect(
-            self.canvas,
-            1,
-            1,
-            width - 1,
-            height - 1,
-            10,
-            fill=PANEL_HOVER,
-            outline=outline,
-            width=1,
-            tags="field",
-        )
-        self.canvas.tag_lower("field")
-        self.canvas.coords(self._window, 11, height / 2)
-        self.canvas.itemconfigure(self._window, width=max(20, width - 22))
+        self.configure(highlightbackground=BORDER)
 
     def focus_set(self) -> None:  # pragma: no cover - thin wrapper
         self.entry.focus_set()
+
+
+class OptionCheck(tk.Frame):
+    """Checkbox built from native labels: a crisp square and a check mark.
+
+    ``ttk``'s clam theme paints a cross inside the indicator on Windows, which
+    looked broken, while the native ``tk.Checkbutton`` box stays bright white.
+    This keeps full control over colours without drawing on a canvas.
+    """
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        text: str,
+        variable: tk.Variable,
+        command=None,
+        **kwargs,
+    ):
+        self.variable = variable
+        self.command = command
+        self._surface = parent_bg(parent)
+        self._hover = False
+        self._focus = False
+        super().__init__(
+            parent,
+            bg=self._surface,
+            cursor="hand2",
+            takefocus=True,
+            highlightthickness=0,
+            **kwargs,
+        )
+        self.box = tk.Label(
+            self,
+            text="",
+            width=2,
+            bg=PANEL_HOVER,
+            fg=MUTED,
+            font=(FONT, 9, "bold"),
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            highlightcolor=ACCENT,
+            padx=0,
+            pady=0,
+            cursor="hand2",
+        )
+        self.box.pack(side="left", ipady=1)
+        self.label = tk.Label(
+            self,
+            text=text,
+            bg=self._surface,
+            fg=TEXT,
+            font=(FONT, 10),
+            anchor="w",
+            cursor="hand2",
+        )
+        self.label.pack(side="left", padx=(8, 0))
+        for widget in (self, self.box, self.label):
+            widget.bind("<Button-1>", self._on_click, add="+")
+            widget.bind("<Enter>", self._on_enter, add="+")
+            widget.bind("<Leave>", self._on_leave, add="+")
+        self.bind("<space>", self._on_key, add="+")
+        self.bind("<Return>", self._on_key, add="+")
+        self.bind("<FocusIn>", self._on_focus, add="+")
+        self.bind("<FocusOut>", self._on_blur, add="+")
+        self.variable.trace_add("write", lambda *_args: self._sync())
+        self._sync()
+
+    def invoke(self) -> None:
+        self.variable.set(not bool(self.variable.get()))
+        if self.command is not None:
+            self.command()
+
+    def _on_click(self, _event=None) -> str:
+        self.focus_set()
+        self.invoke()
+        return "break"
+
+    def _on_key(self, _event=None) -> str:
+        self.invoke()
+        return "break"
+
+    def _on_enter(self, _event=None) -> None:
+        self._hover = True
+        self._sync()
+
+    def _on_leave(self, _event=None) -> None:
+        self._hover = False
+        self._sync()
+
+    def _on_focus(self, _event=None) -> None:
+        self._focus = True
+        self._sync()
+
+    def _on_blur(self, _event=None) -> None:
+        self._focus = False
+        self._sync()
+
+    def _sync(self) -> None:
+        on = bool(self.variable.get())
+        if on:
+            border = ACCENT_HOVER if (self._hover or self._focus) else ACCENT
+        elif self._hover or self._focus:
+            border = ACCENT
+        else:
+            border = BORDER
+        self.box.configure(
+            text="\u2713" if on else "",
+            bg=ACCENT if on else PANEL_HOVER,
+            fg=ACCENT_TEXT if on else MUTED,
+            highlightbackground=border,
+        )
 
 
 def make_entry(parent: tk.Misc, textvariable: tk.Variable, width: int = 32) -> Field:
@@ -439,8 +526,8 @@ def make_checkbutton(
     text: str,
     variable: tk.Variable,
     command=None,
-) -> Switch:
-    return Switch(parent, text=text, variable=variable, command=command)
+) -> OptionCheck:
+    return OptionCheck(parent, text, variable, command)
 
 
 class ScrollFrame(tk.Frame):
@@ -510,3 +597,21 @@ class ScrollFrame(tk.Frame):
         delta = int(-event.delta / 120 * 3) if event.delta else 0
         if delta:
             self.canvas.yview_scroll(delta, "units")
+
+
+__all__ = [
+    "Card",
+    "Field",
+    "FlatButton",
+    "OptionCheck",
+    "ScrollFrame",
+    "Switch",
+    "attach_entry_menu",
+    "attach_text_menu",
+    "make_checkbutton",
+    "make_entry",
+    "make_label",
+    "parent_bg",
+    "rounded_rect",
+    "ERROR",
+]

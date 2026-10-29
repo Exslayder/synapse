@@ -7,7 +7,7 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 from .. import APP_NAME, __version__, updater
 from ..browser import resolve_browser
@@ -26,12 +26,28 @@ from .theme import (
     MUTED,
     OK,
     PANEL,
-    PANEL_HOVER,
     TEXT,
     dark_titlebar,
     setup_ttk,
 )
-from .widgets import Card, FlatButton, ScrollFrame, Switch, make_label, rounded_rect
+from .widgets import (
+    Card,
+    Field,
+    FlatButton,
+    ScrollFrame,
+    Switch,
+    attach_text_menu,
+    make_label,
+)
+
+
+def plural_sites(count: int) -> str:
+    """Russian plural for «сайт» (1 сайт, 2 сайта, 5 сайтов)."""
+    if count % 10 == 1 and count % 100 != 11:
+        return "сайт"
+    if 2 <= count % 10 <= 4 and not 12 <= count % 100 <= 14:
+        return "сайта"
+    return "сайтов"
 
 
 class MainWindow:
@@ -46,6 +62,7 @@ class MainWindow:
         self._site_status: dict[str, tk.Label] = {}
         self._update_release: updater.Release | None = None
         self._update_checking = False
+        self._status_job: str | None = None
         self.status_var = tk.StringVar(value="")
         self.topmost_var = tk.BooleanVar(value=self.config.window_topmost)
 
@@ -88,14 +105,14 @@ class MainWindow:
         outer = 22
 
         header = tk.Frame(root, bg=BG)
-        header.grid(row=0, column=0, sticky="ew", padx=outer, pady=(20, 4))
+        header.grid(row=0, column=0, sticky="ew", padx=outer, pady=(16, 2))
         header.columnconfigure(1, weight=1)
 
         self._logo = self._load_logo(header, 44)
-        self._logo.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+        self._logo.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 12))
 
         title_row = tk.Frame(header, bg=BG)
-        title_row.grid(row=0, column=1, sticky="sw")
+        title_row.grid(row=0, column=1, sticky="w")
         tk.Label(
             title_row,
             text=APP_NAME,
@@ -113,6 +130,17 @@ class MainWindow:
             pady=1,
         ).pack(side="left", padx=(9, 0), pady=(3, 0))
 
+        right = tk.Frame(header, bg=BG)
+        right.grid(row=0, column=2, sticky="e")
+        Switch(right, text="Поверх", variable=self.topmost_var, command=self._toggle_topmost).pack(
+            side="left", padx=(0, 10)
+        )
+        self._view_button = FlatButton(right, "Вид", self._post_view_menu, small=True)
+        self._view_button.pack(side="left")
+        self._build_view_menu()
+
+        # The subtitle sits on its own row and spans the whole width, so it can
+        # never be squeezed under the buttons at the minimum window size.
         self.subtitle_var = tk.StringVar(value="")
         tk.Label(
             header,
@@ -121,19 +149,10 @@ class MainWindow:
             fg=MUTED,
             font=(FONT, 9),
             anchor="w",
-        ).grid(row=1, column=1, sticky="nw", pady=(2, 0))
-
-        right = tk.Frame(header, bg=BG)
-        right.grid(row=0, column=2, rowspan=2, sticky="e")
-        Switch(right, text="Поверх", variable=self.topmost_var, command=self._toggle_topmost).pack(
-            side="left", padx=(0, 12)
-        )
-        self._view_button = FlatButton(right, "Вид", self._post_view_menu, small=True)
-        self._view_button.pack(side="left")
-        self._build_view_menu()
+        ).grid(row=1, column=1, columnspan=2, sticky="ew", pady=(2, 0))
 
         sites_head = tk.Frame(root, bg=BG)
-        sites_head.grid(row=1, column=0, sticky="ew", padx=outer, pady=(16, 6))
+        sites_head.grid(row=1, column=0, sticky="ew", padx=outer, pady=(12, 4))
         make_label(sites_head, "САЙТЫ", fg=MUTED, font=(FONT, 8, "bold")).pack(side="left")
         make_label(
             sites_head,
@@ -148,41 +167,37 @@ class MainWindow:
         self.sites_scroll.pack(fill="x")
         self.sites_inner = self.sites_scroll.inner
 
-        doh_card = Card(root, padding=(16, 10), radius=16)
-        doh_card.grid(row=3, column=0, sticky="ew", padx=outer, pady=(12, 0))
-        doh_card.body.columnconfigure(1, weight=1)
-        make_label(
-            doh_card.body,
-            "DoH",
-            bg=PANEL,
-            fg=ACCENT,
-            font=(FONT, 8, "bold"),
-        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
-        self.doh_label = tk.Label(
-            doh_card.body,
-            text="",
-            bg=PANEL,
-            fg=TEXT,
-            font=(MONO, 9),
-            anchor="w",
-            justify="left",
+        conn_head = tk.Frame(root, bg=BG)
+        conn_head.grid(row=3, column=0, sticky="ew", padx=outer, pady=(12, 4))
+        make_label(conn_head, "ПОДКЛЮЧЕНИЕ", fg=MUTED, font=(FONT, 8, "bold")).pack(side="left")
+        FlatButton(conn_head, "Изменить", self.open_settings, small=True, ghost=True).pack(
+            side="right"
         )
-        self.doh_label.grid(row=0, column=1, sticky="ew")
-        FlatButton(doh_card.body, "Изменить", self.open_settings, small=True, ghost=True).grid(
-            row=0, column=2, sticky="e", padx=(10, 0)
+
+        doh_card = Card(root, padding=(12, 6), radius=16)
+        doh_card.grid(row=4, column=0, sticky="ew", padx=outer)
+        doh_card.body.columnconfigure(0, weight=1)
+        self.doh_var = tk.StringVar(value="")
+        self.doh_field = Field(doh_card.body, self.doh_var, width=30, readonly=True)
+        self.doh_field.grid(row=0, column=0, sticky="ew")
+        FlatButton(doh_card.body, "Копировать", self._copy_doh, small=True, ghost=True).grid(
+            row=0, column=1, padx=(8, 0)
         )
 
         log_head = tk.Frame(root, bg=BG)
-        log_head.grid(row=4, column=0, sticky="new", padx=outer, pady=(16, 6))
+        log_head.grid(row=5, column=0, sticky="new", padx=outer, pady=(12, 4))
         log_head.columnconfigure(0, weight=1)
         make_label(log_head, "ЖУРНАЛ", fg=MUTED, font=(FONT, 8, "bold")).grid(row=0, column=0, sticky="w")
+        FlatButton(log_head, "Копировать", self._copy_log, small=True, ghost=True).grid(
+            row=0, column=1, sticky="e", padx=(0, 8)
+        )
         FlatButton(log_head, "Очистить", self._clear_log, small=True, ghost=True).grid(
-            row=0, column=1, sticky="e"
+            row=0, column=2, sticky="e"
         )
 
         log_card = Card(root, padding=(12, 10), radius=16, fill_height=True)
-        log_card.grid(row=5, column=0, sticky="nsew", padx=outer)
-        root.rowconfigure(5, weight=1)
+        log_card.grid(row=6, column=0, sticky="nsew", padx=outer)
+        root.rowconfigure(6, weight=1)
         log_card.body.columnconfigure(0, weight=1)
         log_card.body.rowconfigure(0, weight=1)
         self.log_text = tk.Text(
@@ -196,39 +211,47 @@ class MainWindow:
             bd=0,
             highlightthickness=0,
             font=(MONO, 9),
-            height=8,
+            height=6,
             wrap="word",
             padx=2,
             pady=2,
             state="disabled",
         )
         self.log_text.grid(row=0, column=0, sticky="nsew")
-        scrollbar = tk.Scrollbar(
+        attach_text_menu(self.log_text, on_clear=self._clear_log)
+        self.log_scrollbar = ttk.Scrollbar(
             log_card.body,
             orient="vertical",
             command=self.log_text.yview,
-            bg=PANEL,
-            troughcolor=PANEL,
-            activebackground=BORDER,
-            relief="flat",
-            bd=0,
-            width=10,
+            style="Log.Vertical.TScrollbar",
         )
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.log_text.configure(yscrollcommand=scrollbar.set)
+        self.log_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        def on_log_scroll(first: str, last: str) -> None:
+            self.log_scrollbar.set(first, last)
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                self.log_scrollbar.grid_remove()
+            else:
+                self.log_scrollbar.grid()
+
+        self.log_text.configure(yscrollcommand=on_log_scroll)
 
         buttons = tk.Frame(root, bg=BG)
-        buttons.grid(row=6, column=0, sticky="ew", padx=outer, pady=(16, 6))
+        buttons.grid(row=7, column=0, sticky="ew", padx=outer, pady=(12, 4))
         FlatButton(buttons, "Открыть все", self._open_all, accent=True).pack(side="left")
         FlatButton(buttons, "Настройки", self.open_settings).pack(side="left", padx=(10, 0))
         FlatButton(buttons, "Закрыть", self.close, ghost=True).pack(side="right")
 
         footer = tk.Frame(root, bg=BG)
-        footer.grid(row=7, column=0, sticky="ew", padx=outer, pady=(6, 16))
+        footer.grid(row=8, column=0, sticky="ew", padx=outer, pady=(4, 12))
         footer.columnconfigure(1, weight=1)
-        self._status_dot = tk.Canvas(footer, width=8, height=8, bg=BG, highlightthickness=0, bd=0)
-        self._status_dot.grid(row=0, column=0, sticky="w", padx=(0, 7))
-        rounded_rect(self._status_dot, 1, 1, 7, 7, 3, fill=OK, outline=OK)
+        tk.Label(
+            footer,
+            text="●",
+            bg=BG,
+            fg=OK,
+            font=(FONT, 8),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 7))
         make_label(
             footer,
             textvariable=self.status_var,
@@ -236,28 +259,26 @@ class MainWindow:
             font=(FONT, 8),
         ).grid(row=0, column=1, sticky="w")
         self.update_chip = FlatButton(footer, "", self._open_update_page, small=True, accent=True)
-        self.config_label = make_label(footer, "", fg=DIM, font=(FONT, 8), anchor="e")
-        self.config_label.grid(row=0, column=3, sticky="e")
 
-    def _load_logo(self, parent: tk.Misc, size: int) -> tk.Canvas:
-        canvas = tk.Canvas(parent, width=size, height=size, bg=BG, highlightthickness=0, bd=0)
-        rounded_rect(canvas, 0, 0, size, size, 12, fill=ACCENT_SOFT, outline=BORDER)
+    def _load_logo(self, parent: tk.Misc, size: int) -> tk.Label:
         try:
             image = tk.PhotoImage(file=str(self.services.paths.icon_png))
-            factor = max(1, image.width() // (size - 8))
+            factor = max(1, round(image.width() / size))
             if factor > 1:
                 image = image.subsample(factor, factor)
-            canvas.image = image  # type: ignore[attr-defined]
-            canvas.create_image(size // 2, size // 2, image=image)
+            label = tk.Label(parent, image=image, bg=BG, bd=0, highlightthickness=0)
+            label.image = image  # type: ignore[attr-defined]
+            return label
         except tk.TclError:
-            canvas.create_text(
-                size // 2,
-                size // 2,
+            return tk.Label(
+                parent,
                 text="G",
-                fill=ACCENT,
+                bg=ACCENT_SOFT,
+                fg=ACCENT,
                 font=(FONT, 18, "bold"),
+                padx=8,
+                pady=2,
             )
-        return canvas
 
     def _build_view_menu(self) -> None:
         self._view_menu = tk.Menu(
@@ -337,7 +358,7 @@ class MainWindow:
             row.columnconfigure(0, weight=1)
 
             text = tk.Frame(row, bg=PANEL)
-            text.grid(row=0, column=0, sticky="ew", padx=(10, 8), pady=8)
+            text.grid(row=0, column=0, sticky="ew", padx=(10, 8), pady=6)
             name = tk.Label(
                 text,
                 text=site.name,
@@ -367,43 +388,21 @@ class MainWindow:
             pin = Switch(row, text="Поверх", variable=pin_var, command=lambda sid=site.id: self._toggle_pin(sid))
             pin.grid(row=0, column=1, padx=(0, 6))
             FlatButton(row, "Открыть", lambda s=site: self._open_site(s), small=True).grid(
-                row=0, column=2, padx=(0, 10), pady=8
+                row=0, column=2, padx=(0, 10), pady=6
             )
 
             for widget in (row, text, name, url, meta):
                 widget.bind("<Double-1>", lambda _e, s=site: self._open_site(s))
-                widget.bind("<Enter>", lambda _e, r=row: self._tint_row(r, True))
-                widget.bind("<Leave>", lambda _e, r=row: self._tint_row(r, False))
 
-        self.sites_scroll.fit_content(max_height=340, min_height=60)
-
-    def _tint_row(self, row: tk.Frame, hover: bool) -> None:
-        color = PANEL_HOVER if hover else PANEL
-        for child in row.winfo_children():
-            try:
-                child.configure(bg=color)
-            except tk.TclError:
-                pass
-            for sub in child.winfo_children():
-                try:
-                    sub.configure(bg=color)
-                except tk.TclError:
-                    pass
+        self.sites_scroll.fit_content(max_height=290, min_height=60)
 
     def _update_meta(self) -> None:
-        url = self.services.doh_url
-        if len(url) > 62:
-            url = url[:59] + "…"
-        self.doh_label.configure(text=url)
+        self.doh_var.set(self.services.doh_url)
         count = len([site for site in self.config.sites if site.enabled])
         browser = resolve_browser(self.config)
         browser_name = browser.name if browser is not None else "браузер не найден"
-        self.subtitle_var.set(f"DNS-over-HTTPS · {count} сайтов · {browser_name}")
-        self.status_var.set(f"127.0.0.1:{self.services.port} · профили сохранены")
-        config_path = str(self.services.paths.config)
-        if len(config_path) > 46:
-            config_path = "…" + config_path[-45:]
-        self.config_label.configure(text=f"config: {config_path}")
+        self.subtitle_var.set(f"DoH · {count} {plural_sites(count)} · {browser_name}")
+        self._refresh_status()
 
     def _toggle_topmost(self) -> None:
         value = bool(self.topmost_var.get())
@@ -491,7 +490,7 @@ class MainWindow:
             self._update_release = release
             self.update_chip.configure(text=f"Обновление {release.version}")
             self.update_chip.grid(row=0, column=2, sticky="e", padx=(0, 12))
-            self.status_var.set(f"Доступна версия {release.version}")
+            self._refresh_status()
             self.services.logger.info(f"Доступно обновление {release.version}")
             return
         if error and not silent:
@@ -553,6 +552,45 @@ class MainWindow:
                 )
 
     # ------------------------------------------------------------------- misc
+
+    def _refresh_status(self) -> None:
+        if self._update_release is not None:
+            self.status_var.set(f"Доступна версия {self._update_release.version}")
+        else:
+            self.status_var.set(f"прокси 127.0.0.1:{self.services.port}")
+
+    def _flash_status(self, text: str, delay: int = 2600) -> None:
+        self.status_var.set(text)
+        if self._status_job is not None:
+            try:
+                self.root.after_cancel(self._status_job)
+            except tk.TclError:
+                pass
+        self._status_job = self.root.after(delay, self._refresh_status)
+
+    def _copy_doh(self) -> None:
+        url = self.services.doh_url
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            self.root.update_idletasks()
+        except tk.TclError:
+            return
+        self._flash_status("DoH-адрес скопирован")
+
+    def _copy_log(self) -> None:
+        text = self.log_text
+        if not text.get("1.0", "end-1c").strip():
+            self._flash_status("Журнал пока пуст")
+            return
+        if not text.tag_ranges("sel"):
+            text.tag_add("sel", "1.0", "end-1c")
+        try:
+            text.event_generate("<<Copy>>")
+        except tk.TclError:
+            pass
+        text.tag_remove("sel", "1.0", "end")
+        self._flash_status("Журнал скопирован")
 
     def _append_log(self, line: str) -> None:
         self.log_text.configure(state="normal")
