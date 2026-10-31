@@ -30,6 +30,14 @@ jobs:
       - name: Build application
         run: npm run tauri build
 
+      - name: Collect release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-out | Out-Null
+          Copy-Item src-tauri/target/release/synapse.exe dist-out/Synapse.exe
+          Copy-Item src-tauri/target/release/bundle/nsis/*.exe dist-out/
+          Copy-Item src-tauri/target/release/bundle/msi/*.msi dist-out/
+
       - name: Replace files in the latest release
         shell: pwsh
         env:
@@ -41,10 +49,5 @@ jobs:
             exit 1
           }
           Write-Host "Updating release $tag"
-          gh release upload $tag "src-tauri/target/release/synapse.exe#Synapse.exe" --clobber
-          Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | ForEach-Object {
-            gh release upload $tag $_.FullName --clobber
-          }
-          Get-ChildItem src-tauri/target/release/bundle/msi/*.msi | ForEach-Object {
-            gh release upload $tag $_.FullName --clobber
-          }
+          gh release upload $tag dist-out/* --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
