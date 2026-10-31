@@ -25,9 +25,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class DohUrlTests(unittest.TestCase):
     def test_default_host_gets_https_and_path(self) -> None:
-        endpoint = parse_doh_url("dns.dagami.ru")
-        self.assertEqual(endpoint.url, "https://dns.dagami.ru/dns-query")
-        self.assertEqual(endpoint.host, "dns.dagami.ru")
+        endpoint = parse_doh_url("dns.example")
+        self.assertEqual(endpoint.url, "https://dns.example/dns-query")
+        self.assertEqual(endpoint.host, "dns.example")
         self.assertEqual(endpoint.port, 443)
         self.assertEqual(endpoint.path, "/dns-query")
 
@@ -67,11 +67,26 @@ class DohUrlTests(unittest.TestCase):
 
 
 class DohSettingsTests(unittest.TestCase):
+    def test_empty_by_default_and_uses_system_dns(self) -> None:
+        settings = DohSettings()
+        self.assertEqual(settings.url, "")
+        self.assertEqual(settings.bootstrap_ips, [])
+        self.assertFalse(settings.configured)
+        self.assertIsNone(settings.endpoint())
+
+    def test_blank_url_is_allowed(self) -> None:
+        for value in ("", "   "):
+            with self.subTest(value=value):
+                settings = DohSettings.from_dict({"url": value, "bootstrap_ips": ""})
+                self.assertEqual(settings.url, "")
+                self.assertEqual(settings.bootstrap_ips, [])
+                self.assertIsNone(settings.endpoint())
+
     def test_bootstrap_parsing_and_dedup(self) -> None:
         settings = DohSettings.from_dict(
-            {"bootstrap_ips": "45.147.31.32, 8.8.8.8; 45.147.31.32", "timeout": 999}
+            {"bootstrap_ips": "1.1.1.1, 8.8.8.8; 1.1.1.1", "timeout": 999}
         )
-        self.assertEqual(settings.bootstrap_ips, ["45.147.31.32", "8.8.8.8"])
+        self.assertEqual(settings.bootstrap_ips, ["1.1.1.1", "8.8.8.8"])
         self.assertEqual(settings.timeout, 30.0)
 
     def test_bootstrap_invalid(self) -> None:

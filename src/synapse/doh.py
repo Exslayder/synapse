@@ -1,7 +1,7 @@
 """DNS-over-HTTPS resolver.
 
 The DoH endpoint is contacted by bootstrap IP with the proper SNI/Host name,
-because ordinary DNS for dns.dagami.ru is not reliable.  Responses are parsed
+because ordinary DNS for the DoH host is not reliable.  Responses are parsed
 locally; only public A records are returned to the proxy.
 """
 
@@ -274,7 +274,7 @@ class DohResolver:
         self._cache: dict[str, tuple[float, list[str], str]] = {}
 
     @property
-    def endpoint(self) -> DohEndpoint:
+    def endpoint(self) -> DohEndpoint | None:
         with self._lock:
             return self._endpoint
 
@@ -290,9 +290,12 @@ class DohResolver:
             self._endpoint = endpoint
             self._context = context
             self._cache.clear()
-        self._log_line(
-            f"DoH: {endpoint.url}  bootstrap={', '.join(settings.bootstrap_ips) or 'системный DNS'}"
-        )
+        if endpoint is None:
+            self._log_line("DoH не настроен — используется системный DNS")
+        else:
+            self._log_line(
+                f"DoH: {endpoint.url}  bootstrap={', '.join(settings.bootstrap_ips) or 'системный DNS'}"
+            )
 
     def clear_cache(self) -> None:
         with self._lock:
@@ -339,6 +342,13 @@ class DohResolver:
         return ips, via
 
     def _resolve_uncached(self, host: str) -> tuple[list[str], str, int]:
+        with self._lock:
+            endpoint = self._endpoint
+        if endpoint is None:
+            # No DoH server configured: resolve through the system resolver so
+            # the proxy and the sites keep working until the user sets one.
+            return self._system_lookup(host), "Системный DNS", 60
+
         current = host
         seen: set[str] = set()
         via = "DoH"
@@ -358,11 +368,29 @@ class DohResolver:
             raise DohError("нет A-записи")
         raise DohError("слишком длинная цепочка CNAME")
 
+    @staticmethod
+    def _system_lookup(host: str) -> list[str]:
+        try:
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise DohError(f"системный DNS: {exc}") from exc
+        found: list[str] = []
+        for info in infos:
+            ip = str(info[4][0])
+            if is_global_ip(ip) and ip not in found:
+                found.append(ip)
+        if not found:
+            raise DohError("системный DNS не вернул адресов")
+        return found
+
     def _query(self, name: str) -> tuple[DnsResult, str]:
         with self._lock:
             settings = self._settings.copy()
             endpoint = self._endpoint
             context = self._context
+
+        if endpoint is None:
+            raise DohError("DoH-сервер не настроен")
 
         packet = build_query(name, 1)
         expected_id = struct.unpack_from(">H", packet, 0)[0]

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import struct
 import unittest
+from unittest import mock
 
 from tests._bootstrap import SRC  # noqa: F401
+from synapse.config import DohSettings
 from synapse.doh import (
     DohError,
+    DohResolver,
     build_query,
     encode_name,
     parse_dns_response,
@@ -152,6 +155,33 @@ class DnsResultTests(unittest.TestCase):
         )
         result = parse_dns_response(_response(ancount=1, answers=answer), 0x1234)
         self.assertEqual(result.ttl, 86400)
+
+
+class SystemDnsFallbackTests(unittest.TestCase):
+    """An empty DoH address must not break the proxy."""
+
+    def test_unconfigured_doh_uses_system_resolver(self) -> None:
+        resolver = DohResolver(DohSettings())
+        self.assertIsNone(resolver.endpoint)
+        answers = [(2, 1, 6, "", ("93.184.216.34", 0))]
+        with mock.patch("synapse.doh.socket.getaddrinfo", return_value=answers) as lookup:
+            ips, via = resolver.resolve_detailed("example.com", use_cache=False)
+        self.assertEqual(ips, ["93.184.216.34"])
+        self.assertEqual(via, "Системный DNS")
+        lookup.assert_called_once()
+
+    def test_system_resolver_failure_is_reported(self) -> None:
+        resolver = DohResolver(DohSettings())
+        with mock.patch("synapse.doh.socket.getaddrinfo", side_effect=OSError("boom")):
+            with self.assertRaises(DohError):
+                resolver.resolve_detailed("example.com", use_cache=False)
+
+    def test_configure_empty_switches_to_system_dns(self) -> None:
+        messages: list[str] = []
+        resolver = DohResolver(DohSettings(url="https://dns.example/dns-query"), messages.append)
+        resolver.configure(DohSettings())
+        self.assertIsNone(resolver.endpoint)
+        self.assertIn("DoH не настроен", messages[-1])
 
 
 if __name__ == "__main__":

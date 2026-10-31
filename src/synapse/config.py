@@ -20,8 +20,11 @@ from urllib.parse import urlsplit, urlunsplit
 from .net import HOST_RE, is_ip, normalize_host
 
 CONFIG_VERSION = 3
-DEFAULT_DOH_URL = "https://dns.dagami.ru/dns-query"
-DEFAULT_BOOTSTRAP = ["45.147.31.32"]
+# Synapse has no built-in DoH provider: the user enters their own server.
+# An empty address means "use the system resolver", so the app still starts
+# and works before anything is configured.
+DEFAULT_DOH_URL = ""
+DEFAULT_BOOTSTRAP: list[str] = []
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 GEOMETRY_RE = re.compile(
     r"^(?P<w>\d{2,4})x(?P<h>\d{2,4})(?:(?P<x>[+-]\d{1,5})(?P<y>[+-]\d{1,5})?)?$"
@@ -98,6 +101,8 @@ def parse_doh_url(raw: str) -> DohEndpoint:
 def _parse_bootstrap(value: object) -> list[str]:
     if value is None:
         return list(DEFAULT_BOOTSTRAP)
+    if isinstance(value, str) and not value.strip():
+        return []
     if isinstance(value, str):
         raw_items = re.split(r"[\s,;]+", value.strip())
     elif isinstance(value, (list, tuple)):
@@ -124,7 +129,14 @@ class DohSettings:
     fallback_tcp: bool = True
     timeout: float = 8.0
 
-    def endpoint(self) -> DohEndpoint:
+    @property
+    def configured(self) -> bool:
+        return bool(self.url.strip())
+
+    def endpoint(self) -> DohEndpoint | None:
+        """Parsed DoH endpoint, or ``None`` when no server is configured."""
+        if not self.url.strip():
+            return None
         return parse_doh_url(self.url)
 
     def copy(self) -> DohSettings:
@@ -139,8 +151,8 @@ class DohSettings:
     def from_dict(cls, data: object) -> DohSettings:
         if not isinstance(data, dict):
             data = {}
-        url = str(data.get("url", DEFAULT_DOH_URL)).strip() or DEFAULT_DOH_URL
-        endpoint = parse_doh_url(url)
+        raw_url = str(data.get("url", DEFAULT_DOH_URL) or "").strip()
+        endpoint = parse_doh_url(raw_url) if raw_url else None
         try:
             timeout = float(data.get("timeout", 8.0))
         except (TypeError, ValueError):
@@ -148,7 +160,7 @@ class DohSettings:
         timeout = max(2.0, min(30.0, timeout))
         fallback = data.get("fallback_tcp", True)
         return cls(
-            url=endpoint.url,
+            url=endpoint.url if endpoint is not None else "",
             bootstrap_ips=_parse_bootstrap(data.get("bootstrap_ips", DEFAULT_BOOTSTRAP)),
             fallback_tcp=bool(fallback),
             timeout=timeout,

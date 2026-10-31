@@ -403,11 +403,13 @@ class MainWindow:
         self.sites_scroll.fit_content(max_height=290, min_height=60)
 
     def _update_meta(self) -> None:
-        self.doh_var.set(self.services.doh_url)
+        url = self.services.doh_url
+        self.doh_var.set(url or "DoH не настроен · используется системный DNS")
         count = len([site for site in self.config.sites if site.enabled])
         browser = resolve_browser(self.config)
         browser_name = browser.name if browser is not None else "браузер не найден"
-        self.subtitle_var.set(f"DoH · {count} {plural_sites(count)} · {browser_name}")
+        doh_label = "DoH" if url else "DoH не настроен"
+        self.subtitle_var.set(f"{doh_label} · {count} {plural_sites(count)} · {browser_name}")
         self._refresh_status()
 
     def _toggle_topmost(self) -> None:

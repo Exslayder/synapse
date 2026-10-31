@@ -8,6 +8,18 @@ build/
 dist/
 *.spec
 
+# Build / release artefacts
+*.exe
+*.zip
+*.msi
+*.sha256
+*.tmp
+*.bak
+.coverage
+htmlcov/
+.tox/
+.nox/
+
 # Runtime data
 config.json
 config.broken-*.json

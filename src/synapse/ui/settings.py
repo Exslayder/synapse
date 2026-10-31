@@ -20,8 +20,6 @@ from ..browser import browser_candidates, resolve_browser
 from ..config import (
     AppConfig,
     ConfigError,
-    DEFAULT_BOOTSTRAP,
-    DEFAULT_DOH_URL,
     DohSettings,
     Site,
     normalize_site_url,
@@ -226,10 +224,13 @@ class SettingsDialog(tk.Toplevel):
         )
         make_label(
             body,
-            "Например: https://dns.dagami.ru/dns-query",
+            "Например: https://dns.example/dns-query · можно оставить пустым — "
+            "тогда используется системный DNS.",
             bg=PANEL,
             fg=DIM,
             font=(FONT, 8),
+            wraplength=520,
+            justify="left",
         ).grid(row=1, column=1, sticky="w", padx=(16, 0))
 
         make_label(body, "Bootstrap IP", bg=PANEL, font=(FONT, 10)).grid(
@@ -264,9 +265,6 @@ class SettingsDialog(tk.Toplevel):
         actions.grid(row=6, column=0, columnspan=2, sticky="w", pady=(22, 0))
         self.test_btn = FlatButton(actions, "Проверить DNS", self._test_dns)
         self.test_btn.pack(side="left")
-        FlatButton(actions, "Сбросить на Dagami", self._reset_dns, ghost=True).pack(
-            side="left", padx=(10, 0)
-        )
 
         self.test_label = make_label(
             body,
@@ -691,13 +689,6 @@ class SettingsDialog(tk.Toplevel):
 
     # -------------------------------------------------------------------- dns
 
-    def _reset_dns(self) -> None:
-        self.url_var.set(DEFAULT_DOH_URL)
-        self.boot_var.set(", ".join(DEFAULT_BOOTSTRAP))
-        self.fallback_var.set(True)
-        self.timeout_var.set("8")
-        self.test_label.configure(text="", fg=MUTED)
-
     def _collect_doh(self) -> DohSettings:
         return DohSettings.from_dict(
             {
@@ -715,6 +706,12 @@ class SettingsDialog(tk.Toplevel):
             doh = self._collect_doh()
         except (ConfigError, ValueError) as exc:
             self.test_label.configure(text=str(exc), fg=ERROR)
+            return
+        if not doh.configured:
+            self.test_label.configure(
+                text="Укажите DoH-сервер, чтобы проверить DNS.",
+                fg=ERROR,
+            )
             return
         self._test_running = True
         self.test_btn.configure(state="disabled")

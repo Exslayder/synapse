@@ -117,7 +117,7 @@ def fatal(message: str, logger: AppLogger | None = None) -> None:
 
 def run_check(config: AppConfig, logger: AppLogger) -> int:
     started = time.monotonic()
-    print(f"config={config.doh.url}")
+    print(f"config={config.doh.url or '(не настроен, системный DNS)'}")
     print(f"bootstrap={','.join(config.doh.bootstrap_ips) or 'system'}")
     try:
         resolver = DohResolver(config.doh, logger.info)
@@ -260,7 +260,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         services = Services(paths, store, config, logger)
         logger.info(f"proxy: 127.0.0.1:{services.port}")
-        logger.info(f"doh: {services.doh_url}")
+        logger.info(
+            f"doh: {services.doh_url}"
+            if services.doh_url
+            else "doh: не настроен — используется системный DNS"
+        )
         return _show_gui(services, log_queue)
     except Exception as exc:
         logger.error("Критическая ошибка", exc)

@@ -1,10 +1,8 @@
 {
   "version": 3,
   "doh": {
-    "url": "https://dns.dagami.ru/dns-query",
-    "bootstrap_ips": [
-      "45.147.31.32"
-    ],
+    "url": "",
+    "bootstrap_ips": [],
     "fallback_tcp": true,
     "timeout": 8.0
   },

@@ -41,6 +41,8 @@ git config --global user.email "you@example.com"
 | `app.lock` | служебный файл запуска |
 | `updates/` | скачанные обновления |
 | `dist/`, `build/`, `*.spec` | результаты сборки |
+| `*.exe`, `*.zip`, `*.msi`, `*.sha256` | готовые сборки и контрольные суммы (их место — в Releases, не в git) |
+| `*.tmp`, `*.bak`, `.coverage`, `htmlcov/`, `.tox/`, `.nox/` | временные файлы и кэш инструментов |
 | `__pycache__/`, `*.py[cod]`, `*.egg-info/` | кэш Python |
 | `.venv/`, `venv/` | виртуальные окружения |
 | `.idea/`, `.vscode/`, `.DS_Store`, `Thumbs.db`, `desktop.ini` | мусор редакторов и ОС |
@@ -87,7 +89,7 @@ git ls-files | Measure-Object -Line
 cd F:\Python\tools\ai\opencode\synapse
 
 git add -A
-git commit -m "Synapse 1.0.0"
+git commit -m "Synapse 1.0.2"
 git branch -M main
 git remote add origin https://github.com/ВАШ-ЛОГИН/synapse.git
 git push -u origin main
@@ -178,27 +180,27 @@ pip-freeze.txt
 Перед тегом обновите оба значения и `CHANGELOG.md`.
 
 ```powershell
-# версия уже 1.0.0
+# версия уже 1.0.2
 git add -A
-git commit -m "Release 1.0.0"
+git commit -m "Release 1.0.2"
 git push
 
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
-Тег `v1.0.0` запускает workflow, который:
+Тег `v1.0.2` запускает workflow, который:
 
 1. прогоняет тесты;
 2. собирает `.exe`;
-3. создаёт **обычный релиз** `v1.0.0` с файлами `Synapse.exe`,
+3. создаёт **обычный релиз** `v1.0.2` с файлами `Synapse.exe`,
    `.sha256`, build-info и `pip-freeze.txt`.
 
-Проверка: вкладка **Releases** → `v1.0.0`. Файл `Synapse.exe` должен быть
+Проверка: вкладка **Releases** → `v1.0.2`. Файл `Synapse.exe` должен быть
 в списке Assets. Именно его скачивает встроенный updater.
 
-> Тег и версия в коде должны совпадать. Если в коде `1.0.0`, а тег `v1.2.0`,
-> приложение после обновления снова предложит «обновиться» до `1.0.0`.
+> Тег и версия в коде должны совпадать. Если в коде `1.0.2`, а тег `v1.2.0`,
+> приложение после обновления снова предложит «обновиться» до `1.0.2`.
 
 ---
 
@@ -271,7 +273,7 @@ python build.py
 | Релиз создан, но без `.exe` | сборка упала на шаге **Build EXE**; смотрите лог шага |
 | `--check-updates` пишет `репозиторий не найден (404)` | в `updater.py` остался `exslayder/synapse` или репозиторий приватный |
 | Приложение снова предлагает ту же версию | тег новее, чем `__version__` в коде; обновите версию и пересоберите |
-| Actions не запускается на тег | тег должен начинаться с `v`, например `v1.0.0`, и быть отправлен через `git push origin v1.0.0` |
+| Actions не запускается на тег | тег должен начинаться с `v`, например `v1.0.2`, и быть отправлен через `git push origin v1.0.2` |
 | `dist/` или `profiles/` попали в коммит | `git rm -r --cached dist profiles`, проверьте `.gitignore` |
 | SmartScreen предупреждает | `.exe` не подписан; это ожидаемо, подпись требует платного сертификата |
 
@@ -284,8 +286,8 @@ git status                              # что изменено
 git add -A                              # подготовить всё
 git commit -m "..."                     # закоммитить
 git push                                # отправить в main
-git tag v1.0.0                          # поставить тег
-git push origin v1.0.0                  # отправить тег (запустит релиз)
+git tag v1.0.2                          # поставить тег
+git push origin v1.0.2                  # отправить тег (запустит релиз)
 git tag                                 # список тегов
 gh release list                         # релизы через GitHub CLI, если установлен
 gh run list --workflow build.yml        # список запусков workflow

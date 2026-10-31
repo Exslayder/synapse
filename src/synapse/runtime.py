@@ -49,7 +49,8 @@ class Services:
 
     @property
     def doh_url(self) -> str:
-        return self.resolver.endpoint.url
+        endpoint = self.resolver.endpoint
+        return endpoint.url if endpoint is not None else ""
 
     def _pinned_ids(self, config: AppConfig) -> set[str]:
         return {site.id for site in config.sites if site.pinned and site.enabled}
