@@ -1,0 +1,50 @@
+name: Refresh latest release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run tauri build
+
+      - name: Replace files in the latest release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = gh release list --limit 1 --json tagName --jq '.[0].tagName'
+          if (-not $tag) {
+            Write-Error "No release found"
+            exit 1
+          }
+          Write-Host "Updating release $tag"
+          gh release upload $tag "src-tauri/target/release/synapse.exe#Synapse.exe" --clobber
+          Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | ForEach-Object {
+            gh release upload $tag $_.FullName --clobber
+          }
+          Get-ChildItem src-tauri/target/release/bundle/msi/*.msi | ForEach-Object {
+            gh release upload $tag $_.FullName --clobber
+          }

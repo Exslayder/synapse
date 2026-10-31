@@ -47,6 +47,7 @@ struct Site {
     pinned: bool,
     enabled: bool,
     direct: bool,
+    window: String,
 }
 
 impl Default for Site {
@@ -58,6 +59,7 @@ impl Default for Site {
             pinned: false,
             enabled: true,
             direct: false,
+            window: String::new(),
         }
     }
 }
@@ -117,6 +119,7 @@ fn default_sites() -> Vec<Site> {
         pinned: false,
         enabled: true,
         direct: false,
+        window: String::new(),
     })
     .collect()
 }
@@ -719,7 +722,7 @@ fn apply_pin_force(pid: u32, topmost: bool) {
     }
 }
 
-fn write_firefox_prefs(profile: &Path, port: u16, width: u32, height: u32) {
+fn write_firefox_prefs(profile: &Path, port: u16, width: u32, height: u32, pos: Option<(i32, i32)>) {
     let prefs = [
         ("network.proxy.type", "1".to_string()),
         ("network.proxy.http", "\"127.0.0.1\"".into()),
@@ -767,11 +770,14 @@ fn write_firefox_prefs(profile: &Path, port: u16, width: u32, height: u32) {
     }
     let _ = fs::write(profile.join("user.js"), body);
 
+    let (sx, sy) = pos.unwrap_or((80, 60));
     let xulstore = format!(
-        "{{\"chrome://browser/content/browser.xhtml\":{{\"main-window\":{{\"width\":\"{width}\",\"height\":\"{height}\",\"screenX\":\"80\",\"screenY\":\"60\"}}}}}}"
+        "{{\"chrome://browser/content/browser.xhtml\":{{\"main-window\":{{\"width\":\"{width}\",\"height\":\"{height}\",\"screenX\":\"{}\",\"screenY\":\"{}\"}}}}}}",
+        sx.max(0),
+        sy.max(0)
     );
     let xul_path = profile.join("xulstore.json");
-    if !xul_path.exists() {
+    if pos.is_some() || !xul_path.exists() {
         let _ = fs::write(xul_path, xulstore);
     }
 }
@@ -799,13 +805,24 @@ fn launch_site(
     let profile = base.join("profiles").join(safe_id(&site.id));
     fs::create_dir_all(&profile).map_err(|e| format!("Профиль: {e}"))?;
 
-    let width = cfg.browser_width.max(640);
-    let height = cfg.browser_height.max(480);
+    let saved = parse_window_geometry(&site.window);
+    let width = saved
+        .map(|(w, _, _, _)| w)
+        .unwrap_or_else(|| cfg.browser_width.max(640));
+    let height = saved
+        .map(|(_, h, _, _)| h)
+        .unwrap_or_else(|| cfg.browser_height.max(480));
 
     let mut cmd = Command::new(&browser.path);
     if browser.kind == "firefox" {
         if proxy_port != 0 {
-            write_firefox_prefs(&profile, proxy_port, width, height);
+            write_firefox_prefs(
+                &profile,
+                proxy_port,
+                width,
+                height,
+                saved.map(|(_, _, x, y)| (x, y)),
+            );
         }
         cmd.arg("-new-instance")
             .arg("-no-remote")
@@ -828,6 +845,9 @@ fn launch_site(
             .arg("--disable-background-networking")
             .arg("--disable-component-update")
             .arg("--disable-default-apps");
+        if let Some((_, _, x, y)) = saved {
+            cmd.arg(format!("--window-position={},{}", x.max(0), y.max(0)));
+        }
         if proxy_port != 0 {
             cmd.arg(format!("--proxy-server=http://127.0.0.1:{proxy_port}"));
         }
@@ -869,6 +889,211 @@ fn parse_geometry(text: &str) -> Option<(u32, u32, i32, i32)> {
         return None;
     }
     Some((w, h, x, y))
+}
+
+fn parse_window_geometry(text: &str) -> Option<(u32, u32, i32, i32)> {
+    let (size, rest) = text.split_once('+')?;
+    let (w, h) = size.split_once('x')?;
+    let (x, y) = rest.split_once('+')?;
+    let w: u32 = w.trim().parse().ok()?;
+    let h: u32 = h.trim().parse().ok()?;
+    let x: i32 = x.trim().parse().ok()?;
+    let y: i32 = y.trim().parse().ok()?;
+    if w < 320 || h < 240 {
+        return None;
+    }
+    Some((w, h, x, y))
+}
+
+#[cfg(windows)]
+fn window_rect(pid: u32) -> Option<(i32, i32, u32, u32)> {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut best: Option<(i32, i32, u32, u32, i64)> = None;
+    for raw in window_handles(pid) {
+        let mut rect = RECT::default();
+        unsafe {
+            if GetWindowRect(HWND(raw as *mut _), &mut rect).is_err() {
+                continue;
+            }
+        }
+        let w = (rect.right - rect.left).max(0) as u32;
+        let h = (rect.bottom - rect.top).max(0) as u32;
+        if w < 200 || h < 150 {
+            continue;
+        }
+        let area = (w as i64) * (h as i64);
+        if best.map(|b| area > b.4).unwrap_or(true) {
+            best = Some((rect.left, rect.top, w, h, area));
+        }
+    }
+    best.map(|b| (b.0, b.1, b.2, b.3))
+}
+
+#[cfg(windows)]
+static PENDING_RECTS: Mutex<Vec<(u32, i32, i32, u32, u32, std::time::Instant)>> = Mutex::new(Vec::new());
+
+#[cfg(windows)]
+unsafe extern "system" fn location_hook(
+    _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    event: u32,
+    hwnd: windows::Win32::Foundation::HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, GetWindowThreadProcessId, EVENT_SYSTEM_MOVESIZEEND,
+    };
+
+    if event != EVENT_SYSTEM_MOVESIZEEND {
+        return;
+    }
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    }
+    if pid == 0 {
+        return;
+    }
+    let mut rect = RECT::default();
+    unsafe {
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return;
+        }
+    }
+    let w = (rect.right - rect.left).max(0) as u32;
+    let h = (rect.bottom - rect.top).max(0) as u32;
+    if w < 200 || h < 150 {
+        return;
+    }
+    if let Ok(mut pending) = PENDING_RECTS.lock() {
+        pending.retain(|entry| entry.0 != pid);
+        pending.push((pid, rect.left, rect.top, w, h, std::time::Instant::now()));
+    }
+}
+
+#[cfg(windows)]
+fn start_window_hook() {
+    use windows::Win32::UI::Accessibility::SetWinEventHook;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, TranslateMessage, MSG, EVENT_SYSTEM_MOVESIZEEND,
+        WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    };
+
+    std::thread::spawn(|| unsafe {
+        let hook = SetWinEventHook(
+            EVENT_SYSTEM_MOVESIZEEND,
+            EVENT_SYSTEM_MOVESIZEEND,
+            None,
+            Some(location_hook),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+        if hook.0.is_null() {
+            return;
+        }
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    });
+}
+
+#[cfg(windows)]
+fn start_rect_flusher(state: &Shared) {
+    let state = state.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        let now = std::time::Instant::now();
+        let ready: Vec<(u32, i32, i32, u32, u32)> = {
+            let mut pending = PENDING_RECTS.lock().unwrap();
+            let mut out = Vec::new();
+            pending.retain(|(pid, x, y, w, h, at)| {
+                if now.duration_since(*at) > std::time::Duration::from_millis(500) {
+                    out.push((*pid, *x, *y, *w, *h));
+                    false
+                } else {
+                    true
+                }
+            });
+            out
+        };
+        if ready.is_empty() {
+            continue;
+        }
+        let pids = state.pids.lock().unwrap().clone();
+        let mut cfg = state.config.lock().unwrap();
+        let mut changed = false;
+        for (pid, x, y, w, h) in ready {
+            if let Some(site_id) = pids
+                .iter()
+                .find(|(_, roots)| roots.contains(&pid))
+                .map(|(id, _)| id.clone())
+            {
+                if let Some(site) = cfg.sites.iter_mut().find(|s| s.id == site_id) {
+                    let geo = format!("{w}x{h}+{}+{}", x.max(0), y.max(0));
+                    if site.window != geo {
+                        site.window = geo;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            let snapshot = cfg.clone();
+            drop(cfg);
+            let _ = write_config(&state.base, &snapshot);
+        }
+    });
+}
+
+fn save_site_windows(state: &Shared, quiet: bool) {
+    let mut cfg = state.config.lock().unwrap();
+    let mut changed = false;
+    for site in cfg.sites.iter_mut() {
+        let profile = state.base.join("profiles").join(safe_id(&site.id));
+        let mut pids = state
+            .pids
+            .lock()
+            .unwrap()
+            .get(&site.id)
+            .cloned()
+            .unwrap_or_default();
+        if pids.is_empty() {
+            if let Some(pid) = read_pid_file(&profile) {
+                pids.push(pid);
+            }
+        }
+        if pids.is_empty() {
+            continue;
+        }
+        let tree = expand_tree(&pids);
+        if let Some((x, y, w, h)) = tree
+            .iter()
+            .copied()
+            .filter(|p| pid_alive(*p))
+            .find_map(window_rect)
+        {
+            let geo = format!("{w}x{h}+{}+{}", x.max(0), y.max(0));
+            if site.window != geo {
+                site.window = geo;
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        let snapshot = cfg.clone();
+        drop(cfg);
+        let _ = write_config(&state.base, &snapshot);
+        if !quiet {
+            log_line(&state.base, "info", "размеры окон сайтов сохранены");
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1167,6 +1392,7 @@ fn open_site_impl(state: &Shared, id: &str) -> Result<String, String> {
             if let Some(handle) = tree.iter().find_map(|p| window_handles(*p).first().copied()) {
                 focus_handle(handle);
             }
+            save_site_windows(&shared, true);
         });
     }
     {
@@ -1727,7 +1953,7 @@ fn main() {
                                 let profile =
                                     warmer.base.join("profiles").join(safe_id(&site.id));
                                 if fs::create_dir_all(&profile).is_ok() {
-                                    write_firefox_prefs(&profile, port, width, height);
+                                    write_firefox_prefs(&profile, port, width, height, None);
                                 }
                             }
                             log_line(&warmer.base, "info", "профили Firefox подготовлены");
@@ -1743,6 +1969,9 @@ fn main() {
                     enforce_pins(&keeper);
                 });
             }
+
+            start_window_hook();
+            start_rect_flusher(&shared);
 
             {
                 let starter = shared.clone();
@@ -1800,6 +2029,9 @@ fn main() {
                             let close = cfg.close_browsers_on_exit;
                             drop(cfg);
                             log_line(&state.base, "info", "закрытие: конфиг сохранён");
+                            if close {
+                                save_site_windows(&state, false);
+                            }
                             shutdown_children(&state, close);
                             log_line(&state.base, "info", "закрытие: браузеры остановлены");
                             let _ = fs::remove_file(state.base.join("app.lock"));

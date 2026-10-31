@@ -64,7 +64,7 @@ npm run tauri build
 | `browser_width`, `browser_height` | размер окон сайтов |
 | `window_geometry`, `window_topmost` | окно приложения |
 | `close_browsers_on_exit` | закрывать окна сайтов вместе с приложением |
-| `sites[]` | список сайтов: `id`, `name`, `url`, `pinned`, `enabled`, `direct` |
+| `sites[]` | список сайтов: `id`, `name`, `url`, `pinned`, `enabled`, `direct`, `window` |
 
 `direct: true` у сайта означает «резолвить этот домен системным DNS», минуя DoH.
 
