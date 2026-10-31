@@ -1,0 +1,75 @@
+name: Weekly dependency update
+
+on:
+  schedule:
+    # Every Monday at 03:00 UTC
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Update npm dependencies
+        run: npm update --save
+
+      - name: Update cargo dependencies
+        run: cargo update --manifest-path src-tauri/Cargo.toml
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Rebuild application
+        run: npm run tauri build
+
+      - name: Refresh files in the latest release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = gh release list --limit 1 --json tagName --jq '.[0].tagName'
+          if (-not $tag) {
+            Write-Error "No release found to update"
+            exit 1
+          }
+          Write-Host "Updating release $tag"
+          gh release upload $tag "src-tauri/target/release/synapse.exe#Synapse.exe" --clobber
+          Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe | ForEach-Object {
+            gh release upload $tag $_.FullName --clobber
+          }
+          Get-ChildItem src-tauri/target/release/bundle/msi/*.msi | ForEach-Object {
+            gh release upload $tag $_.FullName --clobber
+          }
+
+      - name: Commit updated lockfiles
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json src-tauri/Cargo.lock
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: weekly dependency update"
+            git push
+          } else {
+            Write-Host "Dependencies already up to date"
+          }

@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Synapse — настройки</title>
+<style>
+  :root{
+    --bg:#0b0e13; --bg-2:#0f1319; --panel:#141922; --panel-2:#191f2a; --line:#232b38;
+    --text:#e8edf5; --muted:#8a97a9; --faint:#5d6a7c;
+    --accent:#4c8dff; --accent-2:#8b5cf6; --ok:#34c98a; --warn:#f2b544; --err:#ef5f5f;
+    --shadow:0 18px 40px -18px rgba(0,0,0,.8);
+  }
+  html[data-theme="light"]{
+    --bg:#eef1f6; --bg-2:#e6eaf1; --panel:#fff; --panel-2:#f7f9fc; --line:#dde3ec;
+    --text:#141a22; --muted:#5f6b7c; --faint:#8b96a6;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;color:var(--text);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    background:linear-gradient(180deg,var(--bg-2),var(--bg));overflow:hidden}
+  .win{height:100%;display:flex;flex-direction:column}
+
+  header{display:flex;align-items:center;gap:12px;padding:18px 22px 14px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .back{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--panel);
+    color:var(--muted);cursor:pointer;display:grid;place-items:center;transition:.15s}
+  .back:hover{color:var(--text);border-color:#33415a}
+  .back svg{width:16px;height:16px}
+  .title{font-size:16px;font-weight:650}
+  .sub{font-size:11.5px;color:var(--faint);margin-top:1px}
+  .spacer{flex:1}
+
+  .content{flex:1 1 auto;min-height:0;overflow:auto;padding:20px 22px 8px;
+    scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  .content::-webkit-scrollbar{width:8px}
+  .content::-webkit-scrollbar-thumb{background:var(--line);border-radius:8px}
+
+  .group{margin-bottom:18px}
+  .group h3{margin:0 0 8px;font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);font-weight:650}
+  .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:2px 16px;box-shadow:var(--shadow)}
+  .row{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .row:last-child{border-bottom:0}
+  .row .lbl{width:200px;font-weight:520;flex:0 0 auto}
+  .row .hint{flex:1 1 200px;color:var(--faint);font-size:12.5px}
+  .field{flex:1 1 260px;display:flex;align-items:center;gap:8px;background:var(--bg-2);border:1px solid var(--line);
+    border-radius:10px;padding:8px 10px;transition:.16s;min-width:0}
+  .field:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(76,141,255,.14)}
+  .field svg{width:14px;height:14px;color:var(--faint);flex:0 0 auto}
+  .field input,.field select{flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--text);
+    font:inherit;font-size:13px}
+  .field select option{background:var(--panel);color:var(--text)}
+  .field.small{flex:0 0 120px}
+  .field.invalid{border-color:var(--err);box-shadow:0 0 0 3px rgba(239,95,95,.15)}
+
+  .switch{width:44px;height:25px;border-radius:999px;background:#2a3342;position:relative;cursor:pointer;
+    flex:0 0 auto;transition:.18s;border:1px solid transparent}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;
+    background:#93a1b5;transition:.18s}
+  .switch.on{background:linear-gradient(135deg,rgba(76,141,255,.45),rgba(139,92,246,.45));border-color:rgba(76,141,255,.5)}
+  .switch.on::after{left:21px;background:#fff}
+  html[data-theme="light"] .switch{background:#d5dce7}
+  html[data-theme="light"] .switch::after{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+
+  .seg{display:flex;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:2px;gap:2px}
+  .seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12.5px;padding:6px 12px;
+    border-radius:8px;cursor:pointer}
+  .seg button.active{background:var(--panel-2);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.25)}
+
+  .tabs{display:flex;gap:4px;margin-left:18px;background:var(--bg-2);border:1px solid var(--line);
+    border-radius:10px;padding:2px}
+  .tab{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12.5px;
+    padding:6px 14px;border-radius:8px;cursor:pointer;transition:.15s}
+  .tab:hover{color:var(--text)}
+  .tab.active{background:var(--panel);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.25)}
+  .site-row{gap:10px}
+  .site-row .del{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:transparent;
+    color:var(--faint);cursor:pointer;flex:0 0 auto;transition:.15s}
+  .site-row .del:hover{color:var(--err);border-color:rgba(239,95,95,.45)}
+
+  footer{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:14px 22px 18px;border-top:1px solid var(--line);
+    background:linear-gradient(180deg,transparent,var(--bg))}
+  footer .note{flex:1;color:var(--faint);font-size:11.5px}
+  .btn{border:0;border-radius:11px;padding:9px 15px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+    color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    box-shadow:0 8px 20px -10px rgba(76,141,255,.9);transition:.16s}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:var(--panel);border:1px solid var(--line);color:var(--text);box-shadow:none}
+  .btn.ghost:hover{border-color:#33415a}
+
+  .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+    background:#1d2632;border:1px solid var(--line);color:var(--text);font-size:12.5px;
+    padding:9px 14px;border-radius:10px;transition:.2s}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast.ok{border-color:rgba(52,201,138,.35);color:#8ef0bd}
+  .toast.err{border-color:rgba(239,95,95,.35);color:#ffb3b3}
+</style>
+</head>
+<body>
+<div class="win">
+  <header>
+    <button class="back" title="Назад" onclick="location.href='index.html'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <div>
+      <div class="title">Настройки</div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-pane="general">Общие</button>
+      <button class="tab" data-pane="sites">Сайты</button>
+    </div>
+    <div class="spacer"></div>
+  </header>
+
+  <div class="content">
+    <div id="pane-general">
+
+    <div class="group">
+      <h3>DNS-over-HTTPS</h3>
+      <div class="box">
+        <div class="row">
+          <div class="lbl">Сервер DoH</div>
+          <div class="field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7L12.5 20"/></svg>
+            <input id="dohUrl" placeholder="https://dns.google/dns-query">
+          </div>
+        </div>
+        <div class="row">
+          <div class="lbl">Bootstrap IP</div>
+          <div class="field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>
+            <input id="bootstrap" placeholder="8.8.8.8, 1.1.1.1">
+          </div>
+        </div>
+        <div class="row">
+          <div class="lbl">Fallback на DNS/53</div>
+          <div class="hint">Если DoH не ответил, запрос уйдёт по обычному DNS</div>
+          <div class="switch" id="fallback" role="switch" aria-checked="false"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Прокси</h3>
+      <div class="box">
+        <div class="row">
+          <div class="lbl">Порт</div>
+          <div class="field small"><input id="proxyPort" inputmode="numeric"></div>
+          <div class="hint">Разрешённые порты: 80, 443</div>
+        </div>
+        <div class="row">
+          <div class="lbl">Таймаут DoH</div>
+          <div class="field small"><input id="dohTimeout" inputmode="decimal"></div>
+          <div class="hint">Секунды на один запрос</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Браузер</h3>
+      <div class="box">
+        <div class="row">
+          <div class="lbl">Какой открывать</div>
+          <div class="field" style="flex:0 0 240px"><select id="browser">
+            <option value="auto">Авто (Chrome, затем Firefox)</option>
+            <option value="chrome">Google Chrome</option>
+            <option value="firefox">Firefox</option>
+          </select></div>
+        </div>
+        <div class="row">
+          <div class="lbl">Путь к браузеру</div>
+          <div class="field"><input id="browserPath" placeholder="определяется автоматически"></div>
+        </div>
+        <div class="row">
+          <div class="lbl">Размер окна сайта</div>
+          <div class="field small"><input id="bw" inputmode="numeric"></div>
+          <div class="field small"><input id="bh" inputmode="numeric"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Поведение</h3>
+      <div class="box">
+        <div class="row"><div class="lbl">Окно поверх всех</div><div class="hint">Держать Synapse над браузером</div><div class="switch" id="topmost" role="switch" aria-checked="false"></div></div>
+        <div class="row"><div class="lbl">Закрывать браузеры при выходе</div><div class="hint">Завершать профили вместе с приложением</div><div class="switch" id="closeBrowsers" role="switch" aria-checked="false"></div></div>
+        <div class="row"><div class="lbl">Проверять обновления</div><div class="hint">GitHub Releases при запуске</div><div class="switch" id="autoUpdates" role="switch" aria-checked="false"></div></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Оформление</h3>
+      <div class="box">
+        <div class="row">
+          <div class="lbl">Тема</div>
+          <div class="seg">
+            <button class="active" data-theme-set="dark">Тёмная</button>
+            <button data-theme-set="light">Светлая</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    </div>
+
+    <div id="pane-sites" hidden>
+      <div class="group">
+        <h3>Сайты</h3>
+        <div class="box" id="sitesBox"></div>
+      </div>
+      <button class="btn ghost" id="addSite" style="margin-bottom:18px">Добавить сайт</button>
+    </div>
+
+  </div>
+
+  <footer>
+    <div class="note" id="note">Настройки сохраняются в config.json рядом с приложением</div>
+    <button class="btn ghost" onclick="location.href='index.html'">Отмена</button>
+    <button class="btn" id="save">Сохранить</button>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const html = document.documentElement;
+  const savedTheme = localStorage.getItem('synapse-theme');
+  if (savedTheme) html.dataset.theme = savedTheme;
+
+  const T = window.__TAURI__;
+  const $ = id => document.getElementById(id);
+  let state = null;
+
+  document.querySelectorAll('[data-theme-set]').forEach(b => {
+    b.classList.toggle('active', b.dataset.themeSet === html.dataset.theme);
+    b.addEventListener('click', () => {
+      html.dataset.theme = b.dataset.themeSet;
+      localStorage.setItem('synapse-theme', b.dataset.themeSet);
+      document.querySelectorAll('[data-theme-set]').forEach(x => x.classList.toggle('active', x === b));
+    });
+  });
+
+  document.querySelectorAll('.switch').forEach(s => {
+    s.addEventListener('click', () => {
+      const on = s.classList.toggle('on');
+      s.setAttribute('aria-checked', String(on));
+    });
+  });
+
+  const isOn = id => $(id).classList.contains('on');
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  let draftSites = [];
+
+  function makeSiteId(url, name) {
+    let base = '';
+    try { base = new URL(url).hostname.replace(/^www\./, '').split('.')[0]; } catch (e) { /* ignore */ }
+    base = (base || name || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
+    let id = base;
+    let n = 2;
+    while (draftSites.some(s => s.id === id)) { id = base + '-' + n++; }
+    return id;
+  }
+
+  function renderSites() {
+    const box = $('sitesBox');
+    if (!draftSites.length) {
+      box.innerHTML = '<div class="row"><div class="hint">Список пуст. Добавьте сайт.</div></div>';
+      return;
+    }
+    box.innerHTML = draftSites.map((s, i) => `
+      <div class="row site-row" data-i="${i}">
+        <div class="field" style="flex:0 0 170px"><input class="site-name" value="${esc(s.name)}" placeholder="Название (обязательно)"></div>
+        <div class="field" style="flex:1 1 240px"><input class="site-url" value="${esc(s.url)}" placeholder="https://example.com"></div>
+        <button class="del" data-del="${i}" title="Удалить сайт">✕</button>
+      </div>`).join('');
+  }
+
+  function validateSites() {
+    let ok = true;
+    document.querySelectorAll('.site-row').forEach(row => {
+      const nameEl = row.querySelector('.site-name');
+      const urlEl = row.querySelector('.site-url');
+      const nameOk = !!nameEl.value.trim();
+      const urlOk = /^https?:\/\/[^\s]+/i.test(urlEl.value.trim());
+      nameEl.closest('.field').classList.toggle('invalid', !nameOk);
+      urlEl.closest('.field').classList.toggle('invalid', !urlOk);
+      if (!nameOk || !urlOk) ok = false;
+    });
+    return ok;
+  }
+
+  function fill(cfg, base) {
+    draftSites = JSON.parse(JSON.stringify(cfg.sites || []));
+    renderSites();
+    $('dohUrl').value = cfg.doh?.url || '';
+    $('bootstrap').value = (cfg.doh?.bootstrap_ips || []).join(', ');
+    $('proxyPort').value = cfg.proxy_port;
+    $('dohTimeout').value = cfg.doh?.timeout ?? 8;
+    $('browser').value = cfg.browser || 'auto';
+    $('browserPath').value = cfg.browser_path || '';
+    $('bw').value = cfg.browser_width;
+    $('bh').value = cfg.browser_height;
+    $('fallback').classList.toggle('on', !!cfg.doh?.fallback_tcp);
+    $('topmost').classList.toggle('on', !!cfg.window_topmost);
+    $('closeBrowsers').classList.toggle('on', !!cfg.close_browsers_on_exit);
+    $('autoUpdates').classList.toggle('on', !!cfg.auto_check_updates);
+  }
+
+  function collect() {
+    const cfg = JSON.parse(JSON.stringify(state.config));
+    cfg.doh = cfg.doh || {};
+    cfg.doh.url = $('dohUrl').value.trim();
+    cfg.doh.bootstrap_ips = $('bootstrap').value.split(',').map(s => s.trim()).filter(Boolean);
+    cfg.doh.fallback_tcp = isOn('fallback');
+    cfg.doh.timeout = Number($('dohTimeout').value.replace(',', '.')) || 8;
+    cfg.proxy_port = Number($('proxyPort').value) || 8877;
+    cfg.browser = $('browser').value;
+    cfg.browser_path = $('browserPath').value.trim();
+    cfg.browser_width = Number($('bw').value) || 1280;
+    cfg.browser_height = Number($('bh').value) || 860;
+    cfg.window_topmost = isOn('topmost');
+    cfg.close_browsers_on_exit = isOn('closeBrowsers');
+    cfg.auto_check_updates = isOn('autoUpdates');
+    cfg.sites = draftSites
+      .map(s => ({
+        ...s,
+        name: String(s.name || '').trim() || 'Сайт',
+        url: String(s.url || '').trim()
+      }))
+      .filter(s => /^https?:\/\//i.test(s.url) && s.name);
+    return cfg;
+  }
+
+  function bindSitesEditor() {
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+        $('pane-general').hidden = tab.dataset.pane !== 'general';
+        $('pane-sites').hidden = tab.dataset.pane !== 'sites';
+      });
+    });
+
+    $('sitesBox').addEventListener('input', (e) => {
+      const row = e.target.closest('.site-row');
+      if (!row) return;
+      const field = e.target.closest('.field');
+      if (field) field.classList.remove('invalid');
+      const i = Number(row.dataset.i);
+      if (!draftSites[i]) return;
+      if (e.target.classList.contains('site-name')) draftSites[i].name = e.target.value;
+      if (e.target.classList.contains('site-url')) draftSites[i].url = e.target.value;
+    });
+
+    $('sitesBox').addEventListener('click', (e) => {
+      const del = e.target.closest('[data-del]');
+      if (!del) return;
+      draftSites.splice(Number(del.dataset.del), 1);
+      renderSites();
+    });
+
+    $('addSite').addEventListener('click', () => {
+      draftSites.push({
+        id: makeSiteId('', 'site'),
+        name: '',
+        url: '',
+        pinned: false,
+        enabled: true,
+        direct: false
+      });
+      renderSites();
+      const rows = $('sitesBox').querySelectorAll('.site-row');
+      const last = rows[rows.length - 1];
+      if (last) last.querySelector('.site-name').focus();
+    });
+  }
+
+  function toast(msg, kind) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (kind ? ' ' + kind : '');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { t.className = 'toast'; }, 2200);
+  }
+
+  (async () => {
+    if (T) {
+      try {
+        state = await T.core.invoke('get_state');
+        fill(state.config, state.base);
+      } catch (e) { toast(String(e), 'err'); }
+    }
+    if (!state) {
+      fill({
+        doh: { url: '', bootstrap_ips: [], fallback_tcp: true, timeout: 8 },
+        proxy_port: 8877, browser: 'auto', browser_path: '',
+        browser_width: 1280, browser_height: 860,
+        window_topmost: false, close_browsers_on_exit: true, auto_check_updates: true,
+        sites: [
+          { id: 'gemini', name: 'Gemini', url: 'https://gemini.google.com', pinned: false, enabled: true, direct: false },
+          { id: 'chatgpt', name: 'ChatGPT', url: 'https://chatgpt.com', pinned: false, enabled: true, direct: false },
+          { id: 'claude', name: 'Claude', url: 'https://claude.ai', pinned: false, enabled: true, direct: false },
+          { id: 'grok', name: 'Grok', url: 'https://grok.com', pinned: false, enabled: true, direct: false }
+        ]
+      }, '');
+    }
+
+    bindSitesEditor();
+
+    $('save').addEventListener('click', async () => {
+      if (!T) { toast('Демо-режим: сохранение недоступно', ''); return; }
+      try {
+        if (!validateSites()) {
+          toast('Заполните выделенные поля', 'err');
+          return;
+        }
+        const payload = collect();
+        if (payload.sites.length !== draftSites.length) {
+          toast('Проверьте адреса: нужен http(s):// и непустое название', 'err');
+          return;
+        }
+        if (!payload.sites.length) {
+          toast('Должен остаться хотя бы один сайт', 'err');
+          return;
+        }
+        const updated = await T.core.invoke('save_config', { config: payload });
+        state = updated;
+        fill(state.config, state.base);
+        toast('Сохранено', 'ok');
+      } catch (e) { toast(String(e), 'err'); }
+    });
+  })();
+</script>
+</body>
+</html>

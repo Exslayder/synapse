@@ -1,0 +1,14 @@
+{
+  "name": "synapse-upgrade",
+  "private": true,
+  "version": "2.0.0",
+  "description": "Synapse redesign prototype on Tauri (Rust + WebView2)",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

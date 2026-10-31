@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Synapse — журнал</title>
+<style>
+  :root{
+    --bg:#0b0e13; --bg-2:#0f1319; --panel:#141922; --panel-2:#191f2a; --line:#232b38;
+    --text:#e8edf5; --muted:#8a97a9; --faint:#5d6a7c;
+    --accent:#4c8dff; --accent-2:#8b5cf6; --ok:#34c98a; --warn:#f2b544; --err:#ef5f5f;
+    --shadow:0 18px 40px -18px rgba(0,0,0,.8);
+    --mono:"Cascadia Mono","Consolas",ui-monospace,monospace;
+  }
+  html[data-theme="light"]{
+    --bg:#eef1f6; --bg-2:#e6eaf1; --panel:#fff; --panel-2:#f7f9fc; --line:#dde3ec;
+    --text:#141a22; --muted:#5f6b7c; --faint:#8b96a6;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;color:var(--text);font:14px/1.5 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    background:linear-gradient(180deg,var(--bg-2),var(--bg));overflow:hidden}
+  .win{height:100%;display:flex;flex-direction:column}
+
+  header{display:flex;align-items:center;gap:12px;padding:18px 22px 14px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .back{width:34px;height:34px;border-radius:10px;border:1px solid var(--line);background:var(--panel);
+    color:var(--muted);cursor:pointer;display:grid;place-items:center;transition:.15s}
+  .back:hover{color:var(--text);border-color:#33415a}
+  .back svg{width:16px;height:16px}
+  .title{font-size:16px;font-weight:650}
+  .sub{font-size:11.5px;color:var(--faint);margin-top:1px;font-family:var(--mono)}
+  .spacer{flex:1}
+  .btn{border:0;border-radius:10px;padding:8px 13px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+    color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent-2));transition:.16s}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:var(--panel);border:1px solid var(--line);color:var(--text)}
+  .btn.ghost:hover{border-color:#33415a}
+
+  .toolbar{display:flex;align-items:center;gap:8px;padding:12px 22px;flex:0 0 auto;flex-wrap:wrap}
+  .chip{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:999px;
+    padding:5px 12px;font-size:12px;cursor:pointer;transition:.15s}
+  .chip.active{color:var(--text);border-color:#3a4a63;background:var(--panel-2)}
+  .search{flex:1 1 220px;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:7px 11px;min-width:0}
+  .search svg{width:14px;height:14px;color:var(--faint);flex:0 0 auto}
+  .search input{flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--text);font:inherit;font-size:13px}
+  .search input::placeholder{color:var(--faint)}
+
+  .logwrap{flex:1 1 auto;min-height:0;margin:0 22px;border:1px solid var(--line);border-radius:14px;
+    background:#0a0d12;display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shadow)}
+  html[data-theme="light"] .logwrap{background:#0d1117}
+  .log{flex:1;overflow:auto;padding:14px 16px;font-family:var(--mono);font-size:12px;line-height:1.75;
+    scrollbar-width:thin;scrollbar-color:#2a3444 transparent;color:#cfd8e3}
+  .log::-webkit-scrollbar{width:9px}
+  .log::-webkit-scrollbar-thumb{background:#2a3444;border-radius:9px}
+  .row{display:flex;gap:10px;align-items:baseline;white-space:pre-wrap;word-break:break-word}
+  .t{color:#5d6a7c;flex:0 0 auto}
+  .lv{flex:0 0 auto;font-size:10.5px;font-weight:700;letter-spacing:.5px;padding:0 6px;border-radius:5px;
+    border:1px solid transparent;line-height:1.7}
+  .lv.info{color:#7fb3ff;background:rgba(76,141,255,.1);border-color:rgba(76,141,255,.25)}
+  .lv.ok{color:#7ee2b0;background:rgba(52,201,138,.1);border-color:rgba(52,201,138,.25)}
+  .lv.warn{color:#ffd98a;background:rgba(242,181,68,.1);border-color:rgba(242,181,68,.28)}
+  .lv.err{color:#ff9b9b;background:rgba(239,95,95,.1);border-color:rgba(239,95,95,.3)}
+  .msg{flex:1;min-width:0}
+  .msg .host{color:#9fc4ff}
+  .msg .dim{color:#7a8698}
+
+  footer{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:12px 22px 16px;color:var(--faint);font-size:11.5px}
+  footer .path{font-family:var(--mono)}
+  footer .sep{opacity:.4}
+  .empty{color:#5d6a7c;font-family:inherit;padding:20px 0;text-align:center}
+
+  .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+    background:#1d2632;border:1px solid rgba(52,201,138,.35);color:#8ef0bd;font-size:12.5px;
+    padding:9px 14px;border-radius:10px;transition:.2s;font-family:inherit}
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+<div class="win">
+  <header>
+    <button class="back" title="Назад" onclick="location.href='index.html'">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <div>
+      <div class="title">Журнал</div>
+      <div class="sub">logs/synapse.log</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn ghost" id="copy">Копировать</button>
+    <button class="btn ghost" id="clear">Очистить</button>
+  </header>
+
+  <div class="toolbar">
+    <button class="chip active" data-level="all">Все</button>
+    <button class="chip" data-level="info">Инфо</button>
+    <button class="chip" data-level="warn">Предупреждения</button>
+    <button class="chip" data-level="err">Ошибки</button>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="filter" placeholder="Фильтр по тексту, например gemini или connect">
+    </div>
+  </div>
+
+  <div class="logwrap">
+    <div class="log" id="log"></div>
+  </div>
+
+  <footer>
+    <span class="path" id="path">logs\synapse.log</span>
+    <span class="sep">·</span>
+    <span>обновляется автоматически</span>
+    <div class="spacer"></div>
+    <span id="counter"></span>
+  </footer>
+</div>
+
+<div class="toast" id="toast">Скопировано</div>
+
+<script>
+  const savedTheme = localStorage.getItem('synapse-theme');
+  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+
+  const T = window.__TAURI__;
+  const $ = id => document.getElementById(id);
+  let entries = [];
+  let level = 'all';
+  let text = '';
+
+  const DEMO = [
+    '12:04:11 INFO Synapse запущен, папка данных: %LOCALAPPDATA%\\Synapse',
+    '12:04:11 INFO DoH не настроен — используется системный DNS',
+    '12:04:12 INFO найден браузер: Google Chrome (C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe)',
+    '12:04:19 INFO Gemini: открыт Google Chrome (профиль gemini, pid 8124)',
+    '12:05:02 INFO ChatGPT: открыт Google Chrome (профиль chatgpt, pid 9032)',
+    '12:06:40 WARN Claude: повторная попытка через 2 с',
+    '12:06:43 INFO Claude: открыт Google Chrome (профиль claude, pid 9776)',
+    '12:07:15 INFO Grok отключён в настройках',
+    '12:08:00 INFO настройки сохранены'
+  ];
+
+  function parseLine(line) {
+    const m = line.match(/^(\d{2}:\d{2}:\d{2})\s+([A-ZА-Я]+)\s+(.*)$/);
+    if (!m) return { t: '', lv: 'info', msg: line };
+    let lv = m[2].toLowerCase();
+    if (lv === 'error' || lv === 'err') lv = 'err';
+    if (lv !== 'info' && lv !== 'ok' && lv !== 'warn' && lv !== 'err') lv = 'info';
+    return { t: m[1], lv, msg: m[3] };
+  }
+
+  const log = $('log');
+  const counter = $('counter');
+  const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+  function render() {
+    const rows = entries.filter(e =>
+      (level === 'all' || e.lv === level) &&
+      (!text || e.msg.toLowerCase().includes(text) || e.t.includes(text))
+    );
+    log.innerHTML = rows.length ? rows.map(e => {
+      const msg = esc(e.msg).replace(/(\b(?:\d{1,3}\.){3}\d{1,3}\b)/g, '<span class="host">$1</span>');
+      return `<div class="row"><span class="t">${e.t}</span><span class="lv ${e.lv}">${e.lv.toUpperCase()}</span><span class="msg">${msg}</span></div>`;
+    }).join('') : '<div class="empty">Пусто — под фильтр ничего не подходит</div>';
+    counter.textContent = rows.length + ' из ' + entries.length + ' строк';
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function load() {
+    if (T) {
+      try {
+        const lines = await T.core.invoke('read_log', { limit: 500 });
+        entries = lines.map(parseLine);
+        const st = await T.core.invoke('get_state');
+        if (st && st.log_path) $('path').textContent = st.log_path;
+      } catch (e) { entries = []; }
+    } else if (!entries.length) {
+      entries = DEMO.map(parseLine);
+    }
+    render();
+  }
+
+  document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+    level = c.dataset.level;
+    document.querySelectorAll('.chip').forEach(x => x.classList.toggle('active', x === c));
+    render();
+  }));
+  document.getElementById('filter').addEventListener('input', e => { text = e.target.value.toLowerCase().trim(); render(); });
+
+  const toast = document.getElementById('toast');
+  function flash(msg) { toast.textContent = msg; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 1500); }
+
+  document.getElementById('copy').addEventListener('click', async () => {
+    const plain = entries.map(e => `${e.t} ${e.lv.toUpperCase()} ${e.msg}`).join('\n');
+    try { await navigator.clipboard.writeText(plain); flash('Скопировано'); } catch { flash('Не удалось скопировать'); }
+  });
+
+  document.getElementById('clear').addEventListener('click', async () => {
+    if (T) {
+      try { await T.core.invoke('clear_log'); } catch (e) { flash(String(e)); return; }
+    }
+    entries = [];
+    render();
+    flash('Журнал очищен');
+  });
+
+  load();
+  setInterval(() => { if (document.visibilityState === 'visible') load(); }, 3000);
+</script>
+</body>
+</html>

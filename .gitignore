@@ -1,0 +1,23 @@
+# Build output
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+
+# Portable runtime data (exe, config, profiles, logs)
+Synapse/
+profiles/
+logs/
+config.json
+*.log
+app.lock
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# Local tooling
+*.bak
+*.tmp
