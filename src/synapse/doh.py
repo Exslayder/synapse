@@ -200,7 +200,7 @@ def doh_query(
             "Content-Type: application/dns-message\r\n"
             "Accept: application/dns-message\r\n"
             f"Content-Length: {len(packet)}\r\n"
-            "User-Agent: GeminiDoH/2\r\n"
+            "User-Agent: Synapse/1\r\n"
             "Connection: close\r\n\r\n"
         ).encode("ascii")
         tls.sendall(head + packet)

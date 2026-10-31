@@ -10,6 +10,7 @@ plain colour changes, and standard copy/paste works as expected.
 
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 from tkinter import ttk
 
@@ -28,8 +29,70 @@ from .theme import (
     MUTED,
     PANEL,
     PANEL_HOVER,
+    SELECT_BG,
+    SELECT_FG,
     TEXT,
 )
+
+# Windows virtual-key codes are layout independent.  Keysym names are not:
+# with the Russian layout Tk reports ``Cyrillic_es`` for the physical C key.
+_WIN_KEYCODES = {65: "a", 67: "c", 86: "v", 88: "x"}
+_CYRILLIC_KEYSYMS = {
+    "cyrillic_ef": "a",
+    "cyrillic_es": "c",
+    "cyrillic_em": "v",
+    "cyrillic_che": "x",
+}
+_CLIPBOARD_ACTIONS = {"a", "c", "v", "x"}
+
+
+def clipboard_key(event) -> str | None:
+    """Map a key press to a clipboard action regardless of keyboard layout."""
+    keysym = str(getattr(event, "keysym", "") or "").lower()
+    key = _CYRILLIC_KEYSYMS.get(keysym, keysym)
+    if key in _CLIPBOARD_ACTIONS:
+        return key
+    if sys.platform == "win32":
+        try:
+            return _WIN_KEYCODES.get(int(getattr(event, "keycode", 0) or 0))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def attach_clipboard(widget: tk.Misc, readonly: bool = False) -> None:
+    """Layout-independent Ctrl+C/V/X/A for Entry, Text and ttk.Spinbox.
+
+    The widget-level binding runs before Tk's class bindings, performs the
+    action once and returns ``break``, so the same keys keep working with the
+    Latin layout as well.
+    """
+
+    events = {"c": "<<Copy>>", "x": "<<Cut>>", "v": "<<Paste>>"}
+
+    def run(_event, action: str) -> str:
+        if action in {"x", "v"} and readonly:
+            return "break"
+        try:
+            if action == "a":
+                widget.event_generate("<<SelectAll>>")
+            else:
+                widget.event_generate(events[action])
+        except tk.TclError:
+            pass
+        return "break"
+
+    def on_ctrl(event) -> str | None:
+        key = clipboard_key(event)
+        if key is None:
+            return None
+        return run(event, key)
+
+    widget.bind("<Control-KeyPress>", on_ctrl, add="+")
+    widget.bind("<Control-Insert>", lambda event: run(event, "c"), add="+")
+    if not readonly:
+        widget.bind("<Shift-Insert>", lambda event: run(event, "v"), add="+")
+        widget.bind("<Shift-Delete>", lambda event: run(event, "x"), add="+")
 
 
 def parent_bg(widget: tk.Misc) -> str:
@@ -96,8 +159,13 @@ def _popup(menu: tk.Menu, event) -> None:
             pass
 
 
-def attach_entry_menu(entry: tk.Entry, readonly: bool = False) -> None:
-    """Right-click menu + Ctrl+A for text fields (Tk has no menu by default)."""
+def attach_entry_menu(entry: tk.Misc, readonly: bool = False) -> None:
+    """Right-click menu + clipboard shortcuts for text fields.
+
+    Works for ``tk.Entry``, ``ttk.Entry`` and ``ttk.Spinbox``; the generic
+    shortcuts are installed separately so they also survive a non-Latin
+    keyboard layout.
+    """
     menu = _popup_menu(entry)
 
     def copy() -> None:
@@ -119,8 +187,10 @@ def attach_entry_menu(entry: tk.Entry, readonly: bool = False) -> None:
             pass
 
     def select_all() -> None:
-        entry.selection_range(0, "end")
-        entry.icursor("end")
+        try:
+            entry.event_generate("<<SelectAll>>")
+        except tk.TclError:
+            pass
 
     if not readonly:
         menu.add_command(label="Вырезать", command=cut)
@@ -131,10 +201,10 @@ def attach_entry_menu(entry: tk.Entry, readonly: bool = False) -> None:
     menu.add_command(label="Выделить всё", command=select_all)
 
     entry.bind("<Button-3>", lambda event: _popup(menu, event), add="+")
-    entry.bind("<Control-a>", lambda _event: (select_all(), "break")[1], add="+")
+    attach_clipboard(entry, readonly=readonly)
 
 
-def attach_text_menu(text: tk.Text, on_clear=None) -> None:
+def attach_text_menu(text: tk.Text, on_clear=None, readonly: bool = True) -> None:
     """Right-click menu for the log: copy, select all, optionally clear."""
     menu = _popup_menu(text)
 
@@ -145,9 +215,10 @@ def attach_text_menu(text: tk.Text, on_clear=None) -> None:
             pass
 
     def select_all() -> None:
-        text.tag_add("sel", "1.0", "end-1c")
-        text.mark_set("insert", "1.0")
-        text.see("end")
+        try:
+            text.event_generate("<<SelectAll>>")
+        except tk.TclError:
+            pass
 
     menu.add_command(label="Копировать", command=copy)
     menu.add_command(label="Выделить всё", command=select_all)
@@ -156,7 +227,7 @@ def attach_text_menu(text: tk.Text, on_clear=None) -> None:
         menu.add_command(label="Очистить журнал", command=on_clear)
 
     text.bind("<Button-3>", lambda event: _popup(menu, event), add="+")
-    text.bind("<Control-a>", lambda _event: (select_all(), "break")[1], add="+")
+    attach_clipboard(text, readonly=readonly)
 
 
 class FlatButton(tk.Button):
@@ -370,8 +441,8 @@ class Field(tk.Frame):
             disabledforeground=MUTED,
             readonlybackground=PANEL_HOVER,
             insertbackground=ACCENT,
-            selectbackground=ACCENT_SOFT,
-            selectforeground=TEXT,
+            selectbackground=SELECT_BG,
+            selectforeground=SELECT_FG,
             relief="flat",
             bd=0,
             highlightthickness=0,
@@ -606,8 +677,10 @@ __all__ = [
     "OptionCheck",
     "ScrollFrame",
     "Switch",
+    "attach_clipboard",
     "attach_entry_menu",
     "attach_text_menu",
+    "clipboard_key",
     "make_checkbutton",
     "make_entry",
     "make_label",

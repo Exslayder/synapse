@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generate the application icon without third-party dependencies."""
+"""Generate the Synapse icon without third-party dependencies.
+
+The mark is a neural «S»: a signal path made of two arcs and a straight
+synapse, drawn with supersampling so it stays crisp from 16 to 256 px.
+"""
 
 from __future__ import annotations
 
@@ -9,13 +13,20 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSETS = ROOT / "src" / "gemini_doh" / "assets"
+ASSETS = ROOT / "src" / "synapse" / "assets"
 DOC_ASSETS = ROOT / "assets"
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 SUPERSAMPLE = 4
 
+# Geometry of the S path in unit coordinates (y grows downwards).
+TOP_CENTER = (0.5, 0.375)
+BOTTOM_CENTER = (0.5, 0.625)
+ARC_RADIUS = 0.205
+STROKE = 0.068
+
 
 def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    t = max(0.0, min(1.0, t))
     return (
         round(a[0] + (b[0] - a[0]) * t),
         round(a[1] + (b[1] - a[1]) * t),
@@ -23,12 +34,7 @@ def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[in
     )
 
 
-def _inside_round_rect(
-    x: float,
-    y: float,
-    inset: float,
-    radius: float,
-) -> bool:
+def _inside_round_rect(x: float, y: float, inset: float, radius: float) -> bool:
     left = top = inset
     right = bottom = 1.0 - inset
     half_w = (right - left) / 2.0
@@ -41,31 +47,79 @@ def _inside_round_rect(
     return distance <= 0.0
 
 
+def _distance_to_segment(
+    x: float, y: float, x1: float, y1: float, x2: float, y2: float
+) -> float:
+    dx = x2 - x1
+    dy = y2 - y1
+    length = dx * dx + dy * dy
+    if not length:
+        return math.hypot(x - x1, y - y1)
+    t = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / length))
+    return math.hypot(x - (x1 + t * dx), y - (y1 + t * dy))
+
+
+def _distance_to_arc(
+    x: float,
+    y: float,
+    center: tuple[float, float],
+    radius: float,
+    start: float,
+    end: float,
+) -> float:
+    """Distance to an arc; angles in degrees, y axis pointing down."""
+    cx, cy = center
+    angle = math.degrees(math.atan2(y - cy, x - cx)) % 360.0
+    start %= 360.0
+    end %= 360.0
+    inside = (start <= angle <= end) if start <= end else (angle >= start or angle <= end)
+    if inside:
+        return abs(math.hypot(x - cx, y - cy) - radius)
+    p1 = (
+        cx + radius * math.cos(math.radians(start)),
+        cy + radius * math.sin(math.radians(start)),
+    )
+    p2 = (
+        cx + radius * math.cos(math.radians(end)),
+        cy + radius * math.sin(math.radians(end)),
+    )
+    return min(math.hypot(x - p1[0], y - p1[1]), math.hypot(x - p2[0], y - p2[1]))
+
+
+def _s_distance(x: float, y: float) -> float:
+    top_left = (TOP_CENTER[0] - ARC_RADIUS, TOP_CENTER[1])
+    bottom_right = (BOTTOM_CENTER[0] + ARC_RADIUS, BOTTOM_CENTER[1])
+    # Upper arc: right -> top -> left (180..360 in screen coordinates).
+    top = _distance_to_arc(x, y, TOP_CENTER, ARC_RADIUS, 180.0, 360.0)
+    # Lower arc: right -> bottom -> left (0..180 in screen coordinates).
+    bottom = _distance_to_arc(x, y, BOTTOM_CENTER, ARC_RADIUS, 0.0, 180.0)
+    # The middle stroke crosses from the upper-left to the lower-right end.
+    spine = _distance_to_segment(x, y, top_left[0], top_left[1], bottom_right[0], bottom_right[1])
+    return min(top, bottom, spine)
+
+
 def _pixel(x: float, y: float) -> tuple[int, int, int, int]:
     if not _inside_round_rect(x, y, 0.012, 0.235):
         return (0, 0, 0, 0)
 
-    background = _mix((24, 28, 40), (11, 13, 20), y)
+    background = _mix((27, 32, 48), (10, 12, 19), y)
     if not _inside_round_rect(x, y, 0.045, 0.205):
-        background = _mix(background, (56, 66, 96), 0.55)
+        background = _mix(background, (62, 74, 112), 0.5)
 
-    accent = _mix((178, 190, 255), (109, 125, 240), y)
+    # Soft light from the top-left keeps the tile from looking flat.
+    glow = max(0.0, 1.0 - math.hypot(x - 0.24, y - 0.16) / 0.62)
+    background = _mix(background, (38, 45, 68), glow * 0.42)
 
-    dx = x - 0.5
-    dy = y - 0.485
-    distance = math.hypot(dx, dy)
-    angle = math.atan2(dy, dx)
-    ring = abs(distance - 0.268) <= 0.051
-    gap = -0.62 < angle < 0.62
-    bar = 0.485 <= x <= 0.745 and abs(y - 0.485) <= 0.05
-
-    if (ring and not gap) or bar:
+    distance = _s_distance(x, y)
+    accent = _mix((190, 201, 255), (106, 123, 240), (y - 0.1) / 0.8)
+    if distance <= STROKE:
+        # A slightly brighter core makes the mark crisp at 16 px.
+        core = max(0.0, 1.0 - distance / STROKE)
+        accent = _mix(accent, (224, 230, 255), core * 0.35)
         return (*accent, 255)
-
-    # A small highlight keeps the icon readable at large sizes.
-    if distance < 0.17 and y < 0.46:
-        highlight = _mix(background, (36, 43, 62), 0.35)
-        return (*highlight, 255)
+    if distance <= STROKE + 0.035:
+        halo = 1.0 - (distance - STROKE) / 0.035
+        background = _mix(background, (92, 106, 196), halo * 0.38)
     return (*background, 255)
 
 
@@ -175,10 +229,10 @@ def write_png(path: Path, size: int = 256) -> None:
 
 
 def main() -> int:
-    write_ico(ASSETS / "gemini-doh.ico")
+    write_ico(ASSETS / "synapse.ico")
     write_png(DOC_ASSETS / "icon.png")
     write_png(ASSETS / "icon.png")
-    print(f"icon: {ASSETS / 'gemini-doh.ico'}")
+    print(f"icon: {ASSETS / 'synapse.ico'}")
     print(f"png:  {DOC_ASSETS / 'icon.png'}")
     print(f"png:  {ASSETS / 'icon.png'}")
     return 0

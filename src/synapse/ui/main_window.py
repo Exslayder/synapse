@@ -26,6 +26,8 @@ from .theme import (
     MUTED,
     OK,
     PANEL,
+    SELECT_BG,
+    SELECT_FG,
     TEXT,
     dark_titlebar,
     setup_ttk,
@@ -60,6 +62,9 @@ class MainWindow:
         self._settings: SettingsDialog | None = None
         self._pin_vars: dict[str, tk.BooleanVar] = {}
         self._site_status: dict[str, tk.Label] = {}
+        self._site_grace: dict[str, float] = {}
+        self._site_errors: dict[str, float] = {}
+        self._status_stop = threading.Event()
         self._update_release: updater.Release | None = None
         self._update_checking = False
         self._status_job: str | None = None
@@ -72,6 +77,7 @@ class MainWindow:
         self._refresh_sites()
         self._update_meta()
         self._poll_log()
+        self._start_status_watch()
         self.root.after(1800, self._poll_updates)
 
         root.protocol("WM_DELETE_WINDOW", self.close)
@@ -179,10 +185,8 @@ class MainWindow:
         doh_card.body.columnconfigure(0, weight=1)
         self.doh_var = tk.StringVar(value="")
         self.doh_field = Field(doh_card.body, self.doh_var, width=30, readonly=True)
+        self.doh_field.entry.configure(font=(MONO, 9))
         self.doh_field.grid(row=0, column=0, sticky="ew")
-        FlatButton(doh_card.body, "Копировать", self._copy_doh, small=True, ghost=True).grid(
-            row=0, column=1, padx=(8, 0)
-        )
 
         log_head = tk.Frame(root, bg=BG)
         log_head.grid(row=5, column=0, sticky="new", padx=outer, pady=(12, 4))
@@ -205,8 +209,8 @@ class MainWindow:
             bg=PANEL,
             fg=MUTED,
             insertbackground=TEXT,
-            selectbackground=ACCENT_SOFT,
-            selectforeground=TEXT,
+            selectbackground=SELECT_BG,
+            selectforeground=SELECT_FG,
             relief="flat",
             bd=0,
             highlightthickness=0,
@@ -337,6 +341,8 @@ class MainWindow:
             child.destroy()
         self._pin_vars.clear()
         self._site_status.clear()
+        self._site_grace.clear()
+        self._site_errors.clear()
 
         enabled = [site for site in self.config.sites if site.enabled]
         if not enabled:
@@ -428,13 +434,65 @@ class MainWindow:
         result = self.services.open_site(site)
         status = self._site_status.get(site.id)
         if result.ok:
+            self._site_errors.pop(site.id, None)
+            # Give the browser a moment to create its window before the
+            # watcher is allowed to hide the indicator again.
+            self._site_grace[site.id] = time.monotonic() + 8.0
             if status is not None:
-                status.configure(text="открыто", fg=OK)
+                status.configure(text="● открыто", fg=OK)
         else:
+            self._site_grace.pop(site.id, None)
+            self._site_errors[site.id] = time.monotonic()
             if status is not None:
                 status.configure(text="ошибка", fg=ERROR)
             self.services.logger.warning(result.message)
             messagebox.showerror(APP_NAME, result.message, parent=self.root)
+
+    def _start_status_watch(self) -> None:
+        """Keep the green «открыто» badge in sync with real browser windows."""
+
+        def worker() -> None:
+            while not self._status_stop.wait(1.5):
+                if self._closed:
+                    return
+                try:
+                    active = self.services.launcher.active_sites()
+                except Exception as exc:  # pragma: no cover - defensive
+                    self.services.logger.warning(
+                        f"Статус окон: {type(exc).__name__}: {exc}"
+                    )
+                    continue
+                try:
+                    self.root.after(0, lambda sites=active: self._sync_site_status(sites))
+                except (tk.TclError, RuntimeError):
+                    return
+
+        threading.Thread(target=worker, name="site-status", daemon=True).start()
+
+    def _sync_site_status(self, active: set[str]) -> None:
+        if self._closed:
+            return
+        now = time.monotonic()
+        for site_id, label in self._site_status.items():
+            try:
+                current = str(label.cget("text"))
+            except tk.TclError:
+                continue
+            if site_id in active:
+                self._site_errors.pop(site_id, None)
+                self._site_grace.pop(site_id, None)
+                if current != "● открыто":
+                    label.configure(text="● открыто", fg=OK)
+                continue
+            if self._site_grace.get(site_id, 0.0) > now:
+                continue
+            self._site_grace.pop(site_id, None)
+            error_at = self._site_errors.get(site_id)
+            if error_at is not None and now - error_at < 6.0:
+                continue
+            self._site_errors.pop(site_id, None)
+            if current:
+                label.configure(text="")
 
     def _open_all(self) -> None:
         sites = [site for site in self.config.sites if site.enabled]
@@ -568,16 +626,6 @@ class MainWindow:
                 pass
         self._status_job = self.root.after(delay, self._refresh_status)
 
-    def _copy_doh(self) -> None:
-        url = self.services.doh_url
-        try:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(url)
-            self.root.update_idletasks()
-        except tk.TclError:
-            return
-        self._flash_status("DoH-адрес скопирован")
-
     def _copy_log(self) -> None:
         text = self.log_text
         if not text.get("1.0", "end-1c").strip():
@@ -631,6 +679,7 @@ class MainWindow:
         if self._closed:
             return
         self._closed = True
+        self._status_stop.set()
         self._save_geometry()
         self._save_config(quiet=True)
         self.status_var.set("Останавливаю…")

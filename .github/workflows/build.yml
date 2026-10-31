@@ -64,27 +64,27 @@ jobs:
       - name: Smoke test
         shell: pwsh
         run: |
-          $process = Start-Process -FilePath ".\dist\GeminiDoH.exe" -ArgumentList "--version" -Wait -PassThru
+          $process = Start-Process -FilePath ".\dist\Synapse.exe" -ArgumentList "--version" -Wait -PassThru
           if ($process.ExitCode -ne 0) {
-            throw "GeminiDoH.exe --version failed with exit code $($process.ExitCode)"
+            throw "Synapse.exe --version failed with exit code $($process.ExitCode)"
           }
 
       - name: Collect environment information
         shell: pwsh
         run: |
           python -m pip freeze | Out-File -Encoding utf8 dist/pip-freeze.txt
-          Get-Content dist/GeminiDoH-build-info.json
+          Get-Content dist/Synapse-build-info.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: GeminiDoH-${{ github.run_number }}
+          name: Synapse-${{ github.run_number }}
           if-no-files-found: error
           retention-days: 30
           path: |
-            dist/GeminiDoH.exe
-            dist/GeminiDoH.exe.sha256
-            dist/GeminiDoH-build-info.json
+            dist/Synapse.exe
+            dist/Synapse.exe.sha256
+            dist/Synapse-build-info.json
             dist/pip-freeze.txt
 
       - name: Weekly date
@@ -104,9 +104,9 @@ jobs:
           prerelease: false
           make_latest: true
           files: |
-            dist/GeminiDoH.exe
-            dist/GeminiDoH.exe.sha256
-            dist/GeminiDoH-build-info.json
+            dist/Synapse.exe
+            dist/Synapse.exe.sha256
+            dist/Synapse-build-info.json
             dist/pip-freeze.txt
 
       - name: Publish weekly build
@@ -118,9 +118,9 @@ jobs:
           body: |
             Automated weekly build with the latest pip/build dependencies.
 
-            - `GeminiDoH.exe` — portable Windows executable
-            - `GeminiDoH.exe.sha256` — SHA-256 checksum
-            - `GeminiDoH-build-info.json` — version and build metadata
+            - `Synapse.exe` — portable Windows executable
+            - `Synapse.exe.sha256` — SHA-256 checksum
+            - `Synapse-build-info.json` — version and build metadata
             - `pip-freeze.txt` — exact build environment
 
             The executable is unsigned, so Windows SmartScreen may ask for confirmation.
@@ -129,7 +129,7 @@ jobs:
           prerelease: true
           make_latest: false
           files: |
-            dist/GeminiDoH.exe
-            dist/GeminiDoH.exe.sha256
-            dist/GeminiDoH-build-info.json
+            dist/Synapse.exe
+            dist/Synapse.exe.sha256
+            dist/Synapse-build-info.json
             dist/pip-freeze.txt

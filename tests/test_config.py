@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests._bootstrap import SRC  # noqa: F401
-from gemini_doh.config import (
+from synapse.config import (
     AppConfig,
     ConfigError,
     ConfigStore,
@@ -210,22 +210,22 @@ class ConfigStoreTests(unittest.TestCase):
 
 class PathTests(unittest.TestCase):
     def test_runtime_uses_environment_home(self) -> None:
-        from gemini_doh.paths import AppPaths
+        from synapse.paths import AppPaths
 
         with tempfile.TemporaryDirectory() as temp:
-            with mock.patch.dict(os.environ, {"GEMINI_DOH_HOME": temp}):
+            with mock.patch.dict(os.environ, {"SYNAPSE_HOME": temp}):
                 paths = AppPaths.runtime()
                 self.assertEqual(paths.root, Path(temp).resolve())
                 self.assertTrue(paths.profiles.is_dir())
                 self.assertTrue(paths.logs.is_dir())
                 self.assertEqual(paths.config, Path(temp).resolve() / "config.json")
-                self.assertEqual(paths.log_file.name, "gemini-doh.log")
+                self.assertEqual(paths.log_file.name, "synapse.log")
 
     def test_config_override_is_resolved(self) -> None:
-        from gemini_doh.paths import AppPaths
+        from synapse.paths import AppPaths
 
         with tempfile.TemporaryDirectory() as temp:
-            with mock.patch.dict(os.environ, {"GEMINI_DOH_HOME": temp}):
+            with mock.patch.dict(os.environ, {"SYNAPSE_HOME": temp}):
                 paths = AppPaths.runtime(str(Path(temp) / "custom.json"))
                 self.assertEqual(paths.config, (Path(temp) / "custom.json").resolve())
 

@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from tests._bootstrap import SRC  # noqa: F401
-from gemini_doh import __version__, updater
+from synapse import __version__, updater
 
 
 class VersionTests(unittest.TestCase):
@@ -24,23 +24,23 @@ class VersionTests(unittest.TestCase):
         self.assertFalse(updater.is_newer("garbage", "2.0.0"))
 
     def test_repo_slug_can_be_overridden(self) -> None:
-        with mock.patch.dict("os.environ", {"GEMINI_DOH_REPO": "someone/else"}):
+        with mock.patch.dict("os.environ", {"SYNAPSE_REPO": "someone/else"}):
             self.assertEqual(updater.repo_slug(), "someone/else")
-        with mock.patch.dict("os.environ", {"GEMINI_DOH_REPO": ""}):
+        with mock.patch.dict("os.environ", {"SYNAPSE_REPO": ""}):
             self.assertEqual(updater.repo_slug(), updater.DEFAULT_REPO)
 
 
 class ReleaseParsingTests(unittest.TestCase):
     PAYLOAD = {
         "tag_name": "v2.3.0",
-        "html_url": "https://github.com/exslayder/gemini-doh/releases/tag/v2.3.0",
+        "html_url": "https://github.com/exslayder/synapse/releases/tag/v2.3.0",
         "body": "  Notes  ",
         "published_at": "2026-10-01T10:00:00Z",
         "draft": False,
         "prerelease": False,
         "assets": [
-            {"name": "GeminiDoH.exe.sha256", "browser_download_url": "https://example/sha"},
-            {"name": "GeminiDoH.exe", "browser_download_url": "https://example/exe"},
+            {"name": "Synapse.exe.sha256", "browser_download_url": "https://example/sha"},
+            {"name": "Synapse.exe", "browser_download_url": "https://example/exe"},
         ],
     }
 
@@ -50,7 +50,7 @@ class ReleaseParsingTests(unittest.TestCase):
         self.assertEqual(release.version, "2.3.0")
         self.assertEqual(release.tag, "v2.3.0")
         self.assertEqual(release.exe_url, "https://example/exe")
-        self.assertEqual(release.exe_name, "GeminiDoH.exe")
+        self.assertEqual(release.exe_name, "Synapse.exe")
         self.assertEqual(release.notes, "Notes")
 
     def test_release_without_version_is_ignored(self) -> None:
@@ -72,7 +72,7 @@ class ReleaseParsingTests(unittest.TestCase):
             "published_at": "",
             "draft": draft,
             "prerelease": prerelease,
-            "assets": [{"name": "GeminiDoH.exe", "browser_download_url": "https://example/exe"}],
+            "assets": [{"name": "Synapse.exe", "browser_download_url": "https://example/exe"}],
         }
 
     def test_latest_prefers_stable_and_skips_drafts(self) -> None:
@@ -119,7 +119,7 @@ class DownloadTests(unittest.TestCase):
             url="https://example/page",
             notes="",
             exe_url="https://example/exe",
-            exe_name="GeminiDoH.exe",
+            exe_name="Synapse.exe",
             published="",
         )
         response = mock.MagicMock()
@@ -133,7 +133,7 @@ class DownloadTests(unittest.TestCase):
                 path = updater.download(release, Path(temp) / "updates")
                 self.assertTrue(path.exists())
                 self.assertEqual(path.read_bytes(), b"MZ fake exe")
-                self.assertEqual(path.name, "GeminiDoH.exe")
+                self.assertEqual(path.name, "Synapse.exe")
 
     def test_download_without_asset_fails(self) -> None:
         from pathlib import Path

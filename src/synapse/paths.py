@@ -12,11 +12,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-APP_DIR_NAME = "GeminiDoH"
+APP_DIR_NAME = "Synapse"
 
 
 def launch_dir() -> Path:
-    override = os.environ.get("GEMINI_DOH_HOME")
+    override = os.environ.get("SYNAPSE_HOME")
     if override:
         return Path(override).expanduser().resolve()
 
@@ -24,7 +24,7 @@ def launch_dir() -> Path:
         return Path(sys.executable).resolve().parent
 
     module = Path(__file__).resolve()
-    # src/gemini_doh/paths.py -> project root
+    # src/synapse/paths.py -> project root
     if module.parent.parent.name == "src":
         return module.parent.parent.parent
     return Path.cwd()
@@ -67,7 +67,7 @@ class AppPaths:
 
     @property
     def log_file(self) -> Path:
-        return self.logs / "gemini-doh.log"
+        return self.logs / "synapse.log"
 
     @classmethod
     def runtime(cls, config_override: str | None = None) -> AppPaths:
@@ -89,6 +89,6 @@ class AppPaths:
             profiles=profiles,
             logs=logs,
             lock=root / "app.lock",
-            icon=resource_path("assets/gemini-doh.ico"),
+            icon=resource_path("assets/synapse.ico"),
             icon_png=resource_path("assets/icon.png"),
         )

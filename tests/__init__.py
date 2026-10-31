@@ -1,1 +1,1 @@
-"""Unit tests for Gemini DoH."""
+"""Unit tests for Synapse."""

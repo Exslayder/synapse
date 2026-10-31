@@ -4,7 +4,7 @@ import struct
 import unittest
 
 from tests._bootstrap import SRC  # noqa: F401
-from gemini_doh.doh import (
+from synapse.doh import (
     DohError,
     build_query,
     encode_name,

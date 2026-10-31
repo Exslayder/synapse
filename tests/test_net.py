@@ -4,7 +4,7 @@ import ipaddress
 import unittest
 
 from tests._bootstrap import SRC  # noqa: F401
-from gemini_doh.net import (
+from synapse.net import (
     is_global_ip,
     is_ip,
     is_valid_domain,

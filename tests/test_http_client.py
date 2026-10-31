@@ -4,7 +4,7 @@ import socket
 import unittest
 
 from tests._bootstrap import SRC  # noqa: F401
-from gemini_doh.http_client import HttpError, read_http_response
+from synapse.http_client import HttpError, read_http_response
 
 
 class HttpReaderTests(unittest.TestCase):

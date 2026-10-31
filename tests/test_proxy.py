@@ -4,7 +4,7 @@ import socket
 import unittest
 
 from tests._bootstrap import SRC  # noqa: F401
-from gemini_doh.proxy import (
+from synapse.proxy import (
     connect_host,
     read_request_head,
     rewrite_request,

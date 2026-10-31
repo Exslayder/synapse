@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from tests._bootstrap import SRC  # noqa: F401
-from gemini_doh.app import acquire_lock, pid_alive, release_lock
+from synapse.app import acquire_lock, pid_alive, release_lock
 
 
 class LockTests(unittest.TestCase):

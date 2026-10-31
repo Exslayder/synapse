@@ -196,7 +196,7 @@ class ProxyHandler(socketserver.BaseRequestHandler):
             remote.settimeout(None)
 
             if method == "CONNECT":
-                client.sendall(b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: GeminiDoH\r\n\r\n")
+                client.sendall(b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: Synapse\r\n\r\n")
                 if rest:
                     remote.sendall(rest)
             else:

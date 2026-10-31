@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from tests._bootstrap import SRC  # noqa: F401
-from gemini_doh.browser import (
+from synapse.browser import (
     Browser,
     browser_kind,
     firefox_install_name,
@@ -15,7 +16,7 @@ from gemini_doh.browser import (
     process_tree,
     resolve_browser,
 )
-from gemini_doh.config import AppConfig
+from synapse.config import AppConfig
 
 
 class FirefoxProfileTests(unittest.TestCase):
@@ -100,6 +101,15 @@ class ProcessTreeTests(unittest.TestCase):
 
     def test_negative_pid_has_empty_tree(self) -> None:
         self.assertEqual(process_tree(-5), set())
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows process tree")
+    def test_descendants_are_collected(self) -> None:
+        from synapse.browser import _tree_from_parents
+
+        parents = {1: 0, 2: 1, 3: 1, 4: 3, 5: 4, 6: 99}
+        self.assertEqual(_tree_from_parents(parents, 1), {1, 2, 3, 4, 5})
+        self.assertEqual(_tree_from_parents(parents, 6), {6})
+        self.assertEqual(_tree_from_parents(parents, 0), set())
 
 
 if __name__ == "__main__":

@@ -42,7 +42,14 @@ from .theme import (
     TEXT,
     dark_titlebar,
 )
-from .widgets import Card, FlatButton, make_checkbutton, make_entry, make_label
+from .widgets import (
+    Card,
+    FlatButton,
+    attach_entry_menu,
+    make_checkbutton,
+    make_entry,
+    make_label,
+)
 
 BROWSER_CHOICES = [
     ("Авто — Chrome, затем Firefox", "auto"),
@@ -67,7 +74,7 @@ def open_path(path: str) -> None:
 def make_spinbox(
     parent: tk.Misc, variable: tk.Variable, low: int, high: int, step: int, width: int
 ) -> ttk.Spinbox:
-    return ttk.Spinbox(
+    spinbox = ttk.Spinbox(
         parent,
         from_=low,
         to=high,
@@ -77,6 +84,8 @@ def make_spinbox(
         style="TSpinbox",
         font=(FONT, 10),
     )
+    attach_entry_menu(spinbox)
+    return spinbox
 
 
 class SettingsDialog(tk.Toplevel):
@@ -97,7 +106,7 @@ class SettingsDialog(tk.Toplevel):
         self._release: updater.Release | None = None
         self._page = 0
 
-        self.title("Настройки — Gemini DoH")
+        self.title("Настройки — Synapse")
         self.configure(bg=BG)
         self.geometry("860x760")
         self.minsize(780, 680)
@@ -812,7 +821,7 @@ class SettingsDialog(tk.Toplevel):
                 self.update_status.configure(text=f"Скачано: {path}", fg=OK)
                 if messagebox.askyesno(
                     "Обновление",
-                    f"Файл скачан:\n{path}\n\nОткрыть папку? Замените старый GeminiDoH.exe "
+                    f"Файл скачан:\n{path}\n\nОткрыть папку? Замените старый Synapse.exe "
                     "новым и запустите его снова.",
                     parent=self,
                 ):

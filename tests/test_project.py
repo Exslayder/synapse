@@ -7,8 +7,8 @@ from pathlib import Path
 
 from tests._bootstrap import SRC  # noqa: F401
 
-from gemini_doh import __version__
-from gemini_doh.ui.main_window import plural_sites
+from synapse import __version__
+from synapse.ui.main_window import plural_sites
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,7 +39,7 @@ class ProjectFilesTests(unittest.TestCase):
         self.assertTrue(all(part.isdigit() for part in parts))
 
     def test_package_icon_is_a_multi_size_ico(self) -> None:
-        icon = ROOT / "src" / "gemini_doh" / "assets" / "gemini-doh.ico"
+        icon = ROOT / "src" / "synapse" / "assets" / "synapse.ico"
         self.assertTrue(icon.is_file())
         data = icon.read_bytes()
         reserved, kind, count = struct.unpack("<HHH", data[:6])

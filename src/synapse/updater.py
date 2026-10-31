@@ -18,10 +18,10 @@ from pathlib import Path
 
 from . import __version__
 
-DEFAULT_REPO = "exslayder/gemini-doh"
+DEFAULT_REPO = "exslayder/synapse"
 API_ROOT = "https://api.github.com"
 VERSION_RE = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?")
-USER_AGENT = f"GeminiDoH/{__version__}"
+USER_AGENT = f"Synapse/{__version__}"
 
 
 class UpdateError(RuntimeError):
@@ -44,7 +44,7 @@ class Release:
 
 
 def repo_slug() -> str:
-    value = os.environ.get("GEMINI_DOH_REPO", "").strip()
+    value = os.environ.get("SYNAPSE_REPO", "").strip()
     return value or DEFAULT_REPO
 
 
@@ -101,7 +101,7 @@ def _release_from_json(data: dict) -> Release | None:
         if name.lower().endswith(".exe"):
             exe_url = str(asset.get("browser_download_url", ""))
             exe_name = name
-            if name.lower() == "geminidoh.exe":
+            if name.lower() == "synapse.exe":
                 break
     return Release(
         version=".".join(str(part) for part in version),
@@ -153,7 +153,7 @@ def download(release: Release, target_dir: Path, timeout: float = 120.0) -> Path
     if not release.exe_url:
         raise UpdateError("В релизе нет файла .exe.")
     target_dir.mkdir(parents=True, exist_ok=True)
-    name = release.exe_name or f"GeminiDoH-{release.version}.exe"
+    name = release.exe_name or f"Synapse-{release.version}.exe"
     target = target_dir / name
     request = urllib.request.Request(release.exe_url, headers={"User-Agent": USER_AGENT})
     context = ssl.create_default_context()

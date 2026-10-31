@@ -1,6 +1,6 @@
 # Публикация проекта на GitHub
 
-Инструкция от пустой папки до готового релиза с `GeminiDoH.exe`, который умеет
+Инструкция от пустой папки до готового релиза с `Synapse.exe`, который умеет
 находить собственные обновления.
 
 ---
@@ -9,7 +9,7 @@
 
 - установленный [Git для Windows](https://git-scm.com/download/win);
 - аккаунт GitHub;
-- локальная копия проекта `gemini-doh` (эта папка);
+- локальная копия проекта `synapse` (эта папка);
 - желательно — Python 3.12 и PyInstaller, чтобы собрать `.exe` локально и проверить
   до первого push.
 
@@ -69,7 +69,7 @@ git ls-files | Measure-Object -Line
 ## 3. Создание репозитория на GitHub
 
 1. Откройте <https://github.com/new>.
-2. **Repository name**: `gemini-doh` (или любое другое имя).
+2. **Repository name**: `synapse` (или любое другое имя).
 3. **Description**: короткое описание, например
    «Windows hub for Gemini, ChatGPT, Claude and Grok behind a local DoH proxy».
 4. **Public** — если хотите, чтобы обновления мог скачать любой пользователь.
@@ -84,12 +84,12 @@ git ls-files | Measure-Object -Line
 ## 4. Первый push
 
 ```powershell
-cd F:\Python\tools\ai\opencode\gemini-doh
+cd F:\Python\tools\ai\opencode\synapse
 
 git add -A
-git commit -m "Gemini DoH 2.1.0"
+git commit -m "Synapse 1.0.0"
 git branch -M main
-git remote add origin https://github.com/ВАШ-ЛОГИН/gemini-doh.git
+git remote add origin https://github.com/ВАШ-ЛОГИН/synapse.git
 git push -u origin main
 ```
 
@@ -109,17 +109,17 @@ git log --oneline -3
 
 ## 5. Укажите свой репозиторий в программе
 
-Приложение ищет обновления в `exslayder/gemini-doh`. Если ваш логин другой,
-поправьте одно место — `src/gemini_doh/updater.py`:
+Приложение ищет обновления в `exslayder/synapse`. Если ваш логин другой,
+поправьте одно место — `src/synapse/updater.py`:
 
 ```python
-DEFAULT_REPO = "ВАШ-ЛОГИН/gemini-doh"
+DEFAULT_REPO = "ВАШ-ЛОГИН/synapse"
 ```
 
 Либо не меняйте код, а задайте переменную окружения перед запуском:
 
 ```powershell
-$env:GEMINI_DOH_REPO = "ВАШ-ЛОГИН/gemini-doh"
+$env:SYNAPSE_REPO = "ВАШ-ЛОГИН/synapse"
 python run.py --check-updates
 ```
 
@@ -154,19 +154,19 @@ permissions:
 
 - вкладка **Actions** → **Build Windows EXE** → последний запуск;
 - шаг **Tests** — unit-тесты и `compileall`;
-- шаг **Build EXE** — сборка `dist/GeminiDoH.exe`;
-- шаг **Smoke test** — запуск `GeminiDoH.exe --version`.
+- шаг **Build EXE** — сборка `dist/Synapse.exe`;
+- шаг **Smoke test** — запуск `Synapse.exe --version`.
 
 Запустить вручную: **Actions** → **Build Windows EXE** → **Run workflow** →
 ветка `main` → **Run workflow**.
 
 Скачать результат: внизу страницы запуска, блок **Artifacts** →
-`GeminiDoH-<номер>` (хранится 30 дней). Внутри:
+`Synapse-<номер>` (хранится 30 дней). Внутри:
 
 ```
-GeminiDoH.exe
-GeminiDoH.exe.sha256
-GeminiDoH-build-info.json
+Synapse.exe
+Synapse.exe.sha256
+Synapse-build-info.json
 pip-freeze.txt
 ```
 
@@ -174,31 +174,31 @@ pip-freeze.txt
 
 ## 8. Релиз по тегу
 
-Версия берётся из `src/gemini_doh/__init__.py` (`__version__`) и `pyproject.toml`.
+Версия берётся из `src/synapse/__init__.py` (`__version__`) и `pyproject.toml`.
 Перед тегом обновите оба значения и `CHANGELOG.md`.
 
 ```powershell
-# версия уже 2.1.0
+# версия уже 1.0.0
 git add -A
-git commit -m "Release 2.1.0"
+git commit -m "Release 1.0.0"
 git push
 
-git tag v2.1.0
-git push origin v2.1.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-Тег `v2.1.0` запускает workflow, который:
+Тег `v1.0.0` запускает workflow, который:
 
 1. прогоняет тесты;
 2. собирает `.exe`;
-3. создаёт **обычный релиз** `v2.1.0` с файлами `GeminiDoH.exe`,
+3. создаёт **обычный релиз** `v1.0.0` с файлами `Synapse.exe`,
    `.sha256`, build-info и `pip-freeze.txt`.
 
-Проверка: вкладка **Releases** → `v2.1.0`. Файл `GeminiDoH.exe` должен быть
+Проверка: вкладка **Releases** → `v1.0.0`. Файл `Synapse.exe` должен быть
 в списке Assets. Именно его скачивает встроенный updater.
 
-> Тег и версия в коде должны совпадать. Если в коде `2.0.0`, а тег `v2.1.0`,
-> приложение после обновления снова предложит «обновиться» до `2.1.0`.
+> Тег и версия в коде должны совпадать. Если в коде `1.0.0`, а тег `v1.2.0`,
+> приложение после обновления снова предложит «обновиться» до `1.0.0`.
 
 ---
 
@@ -226,10 +226,10 @@ Prerelease не предлагается пользователям как об�
 ## 10. Как пользователи получают обновления
 
 1. Приложение при запуске (раз в сутки) или по кнопке «Проверить сейчас»
-   обращается к `https://api.github.com/repos/ВАШ-ЛОГИН/gemini-doh/releases`.
+   обращается к `https://api.github.com/repos/ВАШ-ЛОГИН/synapse/releases`.
 2. Если тег новее текущей версии, появляется кнопка «Обновление X.Y.Z».
 3. «Скачать .exe» сохраняет файл в `updates/` рядом с программой.
-4. Пользователь закрывает приложение, заменяет `GeminiDoH.exe` и запускает снова.
+4. Пользователь закрывает приложение, заменяет `Synapse.exe` и запускает снова.
    `config.json`, `profiles/` и `logs/` не трогаются.
 
 Альтернатива — скачать `.exe` со страницы **Releases** вручную.
@@ -254,8 +254,8 @@ python build.py
 Проверка готового файла:
 
 ```powershell
-.\dist\GeminiDoH.exe --version
-.\dist\GeminiDoH.exe --check-updates
+.\dist\Synapse.exe --version
+.\dist\Synapse.exe --check-updates
 ```
 
 `--version` должен напечатать ту же версию, что и тег.
@@ -269,9 +269,9 @@ python build.py
 | `remote: Repository not found` | неверный URL или нет прав; проверьте `git remote -v` и логин |
 | `403` на шаге релиза | Settings → Actions → General → **Read and write permissions** |
 | Релиз создан, но без `.exe` | сборка упала на шаге **Build EXE**; смотрите лог шага |
-| `--check-updates` пишет `репозиторий не найден (404)` | в `updater.py` остался `exslayder/gemini-doh` или репозиторий приватный |
+| `--check-updates` пишет `репозиторий не найден (404)` | в `updater.py` остался `exslayder/synapse` или репозиторий приватный |
 | Приложение снова предлагает ту же версию | тег новее, чем `__version__` в коде; обновите версию и пересоберите |
-| Actions не запускается на тег | тег должен начинаться с `v`, например `v2.1.0`, и быть отправлен через `git push origin v2.1.0` |
+| Actions не запускается на тег | тег должен начинаться с `v`, например `v1.0.0`, и быть отправлен через `git push origin v1.0.0` |
 | `dist/` или `profiles/` попали в коммит | `git rm -r --cached dist profiles`, проверьте `.gitignore` |
 | SmartScreen предупреждает | `.exe` не подписан; это ожидаемо, подпись требует платного сертификата |
 
@@ -284,8 +284,8 @@ git status                              # что изменено
 git add -A                              # подготовить всё
 git commit -m "..."                     # закоммитить
 git push                                # отправить в main
-git tag v2.1.0                          # поставить тег
-git push origin v2.1.0                  # отправить тег (запустит релиз)
+git tag v1.0.0                          # поставить тег
+git push origin v1.0.0                  # отправить тег (запустит релиз)
 git tag                                 # список тегов
 gh release list                         # релизы через GitHub CLI, если установлен
 gh run list --workflow build.yml        # список запусков workflow
@@ -294,8 +294,8 @@ gh run list --workflow build.yml        # список запусков workflow
 Удалить ошибочный тег:
 
 ```powershell
-git tag -d v2.1.0
-git push origin :refs/tags/v2.1.0
+git tag -d v1.0.0
+git push origin :refs/tags/v1.0.0
 ```
 
 После этого релиз на GitHub нужно удалить вручную во вкладке **Releases**.

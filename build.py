@@ -18,14 +18,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from gemini_doh import APP_NAME, __version__  # noqa: E402
+from synapse import APP_NAME, __version__  # noqa: E402
 
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
-ICON = ROOT / "src" / "gemini_doh" / "assets" / "gemini-doh.ico"
-ICON_PNG = ROOT / "src" / "gemini_doh" / "assets" / "icon.png"
+ICON = ROOT / "src" / "synapse" / "assets" / "synapse.ico"
+ICON_PNG = ROOT / "src" / "synapse" / "assets" / "icon.png"
 VERSION_FILE = BUILD / "version_info.txt"
-EXE_NAME = "GeminiDoH"
+EXE_NAME = "Synapse"
 
 
 def version_tuple(version: str) -> tuple[int, int, int, int]:
@@ -52,7 +52,7 @@ VSVersionInfo(
       StringTable(
         '040904B0',
         [StringStruct('CompanyName', '{APP_NAME} contributors'),
-         StringStruct('FileDescription', '{APP_NAME} - DNS-over-HTTPS browser hub'),
+         StringStruct('FileDescription', '{APP_NAME} - AI chat hub with DNS-over-HTTPS'),
          StringStruct('FileVersion', '{__version__}'),
          StringStruct('InternalName', '{EXE_NAME}'),
          StringStruct('LegalCopyright', 'MIT License'),
@@ -183,7 +183,7 @@ def build(skip_clean: bool = False) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build GeminiDoH.exe")
+    parser = argparse.ArgumentParser(description="Build Synapse.exe")
     parser.add_argument("--no-clean", action="store_true", help="не очищать кэш PyInstaller")
     parser.add_argument("--distclean", action="store_true", help="удалить dist/ и build/ перед сборкой")
     args = parser.parse_args(argv)

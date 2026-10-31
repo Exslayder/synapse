@@ -138,7 +138,7 @@ def run_check(config: AppConfig, logger: AppLogger) -> int:
             tls.sendall(
                 b"GET / HTTP/1.1\r\n"
                 b"Host: gemini.google.com\r\n"
-                b"User-Agent: GeminiDoH-check\r\n"
+                b"User-Agent: Synapse-check\r\n"
                 b"Connection: close\r\n\r\n"
             )
             response = read_http_response(tls)
@@ -205,7 +205,7 @@ def _show_gui(services: Services, log_queue: queue.Queue[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="GeminiDoH", description="Gemini DoH browser hub")
+    parser = argparse.ArgumentParser(prog="Synapse", description="Synapse AI chat hub")
     parser.add_argument("--check", action="store_true", help="проверить DNS/TLS и выйти")
     parser.add_argument(
         "--check-updates",

@@ -21,6 +21,10 @@ ACCENT_HOVER = "#a9b6ff"
 ACCENT_DOWN = "#7b89f0"
 ACCENT_TEXT = "#0b0d14"
 ACCENT_SOFT = "#1b2140"
+# Selection must stand out from PANEL/PANEL_HOVER, otherwise selected text and
+# tree rows look exactly like unselected ones.
+SELECT_BG = "#3b4a86"
+SELECT_FG = "#f7f9ff"
 OK = "#5fdba7"
 ERROR = "#ff8b8b"
 WARN = "#ffce6b"
@@ -109,14 +113,16 @@ def setup_ttk(root: tk.Misc) -> ttk.Style:
         fieldbackground=PANEL,
         foreground=TEXT,
         bordercolor=BORDER,
+        lightcolor=BORDER,
+        darkcolor=BORDER,
         borderwidth=0,
         rowheight=30,
         font=(FONT, 10),
     )
     style.map(
         "Treeview",
-        background=[("selected", ACCENT_SOFT)],
-        foreground=[("selected", TEXT)],
+        background=[("selected", SELECT_BG)],
+        foreground=[("selected", SELECT_FG)],
     )
     style.configure(
         "Treeview.Heading",
@@ -164,8 +170,8 @@ def setup_ttk(root: tk.Misc) -> ttk.Style:
         bordercolor=BORDER,
         lightcolor=PANEL_HOVER,
         darkcolor=PANEL_HOVER,
-        selectbackground=ACCENT_SOFT,
-        selectforeground=TEXT,
+        selectbackground=SELECT_BG,
+        selectforeground=SELECT_FG,
         padding=(9, 5),
         relief="flat",
         borderwidth=0,
