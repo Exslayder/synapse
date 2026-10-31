@@ -120,7 +120,7 @@ class SiteAndSlugTests(unittest.TestCase):
         known.add(first.id)
         second = Site.from_dict({"name": "Test", "url": "https://b.example"}, known)
         self.assertEqual((first.id, second.id), ("test", "test-2"))
-        self.assertEqual(second.match_tokens(), ["test", "b.example"])
+        self.assertEqual(second.host, "b.example")
 
 
 class AppConfigTests(unittest.TestCase):

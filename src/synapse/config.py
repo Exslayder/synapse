@@ -219,12 +219,6 @@ class Site:
         except ValueError:
             return ""
 
-    def match_tokens(self) -> list[str]:
-        tokens = [self.name, self.host]
-        if self.host.startswith("www."):
-            tokens.append(self.host[4:])
-        return [token.strip().lower() for token in tokens if token and token.strip()]
-
     def to_dict(self) -> dict:
         return {
             "id": self.id,

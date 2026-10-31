@@ -224,6 +224,13 @@ def firefox_user_js(proxy_port: int) -> str:
         ("browser.shell.checkDefaultBrowser", "false"),
         ("browser.startup.homepage_override.mstone", '"ignore"'),
         ("browser.startup.page", 0),
+        # Never update or touch the shared Firefox installation from our copy.
+        ("app.update.auto", "false"),
+        ("app.update.background.enabled", "false"),
+        ("app.update.service.enabled", "false"),
+        ("app.update.staging.enabled", "false"),
+        ("extensions.update.enabled", "false"),
+        ("browser.search.update", "false"),
         ("browser.sessionstore.resume_from_crash", "false"),
         ("browser.newtabpage.enabled", "false"),
         ("browser.tabs.warnOnClose", "false"),
@@ -260,6 +267,9 @@ class BrowserLauncher:
         self._lock = threading.Lock()
         self._procs: dict[str, subprocess.Popen] = {}
         self._kinds: dict[str, str] = {}
+        # PID plus executable name lets ``close_all`` refuse to touch anything
+        # that no longer belongs to the browser we started.
+        self._exes: dict[str, str] = {}
 
     def profile_dir(self, site: Site) -> Path:
         safe = "".join(ch for ch in site.id if ch.isalnum() or ch in "-_") or "site"
@@ -287,14 +297,21 @@ class BrowserLauncher:
 
     def _command(self, browser: Browser, site: Site, profile: Path, proxy_port: int, config: AppConfig) -> list[str]:
         if browser.is_firefox:
+            # ``-new-instance`` and ``-no-remote`` force a completely separate
+            # browser process: the running Firefox of the user is never reused,
+            # never receives our window and is never closed together with it.
             return [
                 browser.path,
+                "-new-instance",
+                "-no-remote",
                 "-profile",
                 str(profile),
-                "-no-remote",
                 "-new-window",
                 site.url,
             ]
+        # A private ``--user-data-dir`` gives Chrome its own cookies, cache and
+        # settings.  The extra flags keep this instance away from the shared
+        # browser services (default apps, component updates, background mode).
         return [
             browser.path,
             f"--app={site.url}",
@@ -305,6 +322,10 @@ class BrowserLauncher:
             "--no-default-browser-check",
             "--disable-sync",
             "--disable-background-mode",
+            "--no-service-autorun",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-default-apps",
             f"--window-size={config.browser_width},{config.browser_height}",
         ]
 
@@ -321,6 +342,12 @@ class BrowserLauncher:
             return LaunchResult(False, f"Не удалось создать профиль браузера: {exc}")
 
         args = self._command(browser, site, profile, proxy_port, config)
+        env = os.environ.copy()
+        if browser.is_firefox:
+            # Belt and braces: even if ``-no-remote`` is ever ignored, Firefox
+            # must not send the URL to the user's running instance.
+            env["MOZ_NO_REMOTE"] = "1"
+            env["MOZ_CRASHREPORTER_DISABLE"] = "1"
         try:
             proc = subprocess.Popen(
                 args,
@@ -328,6 +355,7 @@ class BrowserLauncher:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 close_fds=True,
+                env=env,
             )
         except OSError as exc:
             self.log(f"Браузер  {site.name}: ошибка запуска: {exc}")
@@ -336,19 +364,33 @@ class BrowserLauncher:
         with self._lock:
             self._procs[site.id] = proc
             self._kinds[site.id] = browser.kind
+            self._exes[site.id] = os.path.basename(browser.path).lower()
         self.log(f"Окно  {site.name}  →  {site.url}  ({browser.name})")
         return LaunchResult(True, f"Открываю {site.name}…", proc.pid)
 
     def close_all(self) -> None:
+        """Close only browser processes started by this launcher.
+
+        Window titles are deliberately not used: a window of the user's own
+        Chrome or Firefox may contain the same site name, and closing it just
+        because it says "ChatGPT" would be destructive.  The recorded PID is
+        checked against the executable we launched before anything is closed.
+        """
         with self._lock:
             items = list(self._procs.items())
+            expected = dict(self._exes)
             self._procs.clear()
             self._kinds.clear()
+            self._exes.clear()
         for site_id, proc in items:
             try:
                 if proc.poll() is not None:
                     continue
             except OSError:
+                continue
+            exe = expected.get(site_id, "")
+            if exe and not _exe_matches(proc.pid, exe):
+                self.log(f"Пропущено чужое окно: {site_id}")
                 continue
             polite = close_tree_windows(proc.pid)
             if polite:
@@ -401,6 +443,14 @@ class BrowserLauncher:
                 for site_id, proc in self._procs.items()
                 if proc.poll() is None
             }
+
+
+def _exe_matches(pid: int, expected: str) -> bool:
+    """True when ``pid`` is still the browser executable we launched."""
+    if sys.platform != "win32" or not expected:
+        return True
+    actual = _process_exe(pid)
+    return bool(actual) and actual == expected.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -602,18 +652,6 @@ if sys.platform == "win32":
                 return True
         return False
 
-    def close_site_windows(tokens: set[str]) -> int:
-        lowered = {token.lower() for token in tokens if token}
-        if not lowered:
-            return 0
-        closed = 0
-        for hwnd, title, _pid, _exe in _browser_windows():
-            low = title.lower()
-            if any(token in low for token in lowered):
-                if _user32.PostMessageW(wintypes.HWND(hwnd), WM_CLOSE, 0, 0):
-                    closed += 1
-        return closed
-
     def close_tree_windows(root_pid: int) -> int:
         tree = process_tree(root_pid)
         closed = 0
@@ -645,9 +683,6 @@ else:
 
     def focus_pids(_pids: set[int]) -> bool:
         return False
-
-    def close_site_windows(_tokens: set[str]) -> int:
-        return 0
 
     def close_tree_windows(_root_pid: int) -> int:
         return 0

@@ -8,7 +8,6 @@ from .browser import (
     BrowserLauncher,
     LaunchResult,
     PinManager,
-    close_site_windows,
     focus_pids,
     process_tree,
     resolve_browser,
@@ -92,10 +91,9 @@ class Services:
         self.logger.info("Останавливаю прокси…")
         self.pins.stop()
         if close_browsers:
+            # Only the private browser processes started by Synapse.  The
+            # user's own Chrome/Firefox is never touched, even when a window
+            # title happens to contain a site name.
             self.launcher.close_all()
-            tokens: set[str] = set()
-            for site in self.config.sites:
-                tokens.update(site.match_tokens())
-            close_site_windows(tokens)
         shutdown_server(self.server)
         self.logger.info("Готово.")

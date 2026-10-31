@@ -84,7 +84,7 @@ def make_spinbox(
         style="TSpinbox",
         font=(FONT, 10),
     )
-    attach_entry_menu(spinbox)
+    attach_entry_menu(spinbox, variable=variable)
     return spinbox
 
 

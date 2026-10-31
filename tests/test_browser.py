@@ -5,10 +5,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests._bootstrap import SRC  # noqa: F401
 from synapse.browser import (
     Browser,
+    BrowserLauncher,
     browser_kind,
     firefox_install_name,
     firefox_user_js,
@@ -16,7 +18,7 @@ from synapse.browser import (
     process_tree,
     resolve_browser,
 )
-from synapse.config import AppConfig
+from synapse.config import AppConfig, Site
 
 
 class FirefoxProfileTests(unittest.TestCase):
@@ -31,6 +33,13 @@ class FirefoxProfileTests(unittest.TestCase):
         # The Nightly terms-of-use modal would cover the site window.
         self.assertIn('user_pref("termsofuse.bypassNotification", true);', text)
         self.assertIn('user_pref("browser.aboutwelcome.enabled", false);', text)
+
+    def test_user_js_keeps_the_shared_install_untouched(self) -> None:
+        text = firefox_user_js(8877)
+        self.assertIn('user_pref("browser.shell.checkDefaultBrowser", false);', text)
+        self.assertIn('user_pref("app.update.auto", false);', text)
+        self.assertIn('user_pref("app.update.background.enabled", false);', text)
+        self.assertIn('user_pref("app.update.service.enabled", false);', text)
 
     def test_user_js_port_is_not_quoted(self) -> None:
         text = firefox_user_js(12345)
@@ -93,6 +102,81 @@ class ResolveTests(unittest.TestCase):
     def test_browser_dataclass_flags(self) -> None:
         self.assertTrue(Browser("firefox", "Firefox", "x", "firefox").is_firefox)
         self.assertFalse(Browser("chrome", "Chrome", "x").is_firefox)
+
+
+class IsolationCommandTests(unittest.TestCase):
+    """The private browser must never share a process with the user's one."""
+
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temp.cleanup)
+        root = Path(self._temp.name)
+        self.profile = root / "profiles" / "gemini"
+        self.profile.mkdir(parents=True)
+        self.launcher = BrowserLauncher(root / "profiles", lambda _message: None)
+        self.site = Site("gemini", "Gemini", "https://gemini.google.com")
+        self.config = AppConfig()
+
+    def _command(self, browser: Browser) -> list[str]:
+        return self.launcher._command(browser, self.site, self.profile, 8877, self.config)
+
+    def test_firefox_uses_a_new_instance_and_private_profile(self) -> None:
+        command = self._command(Browser("firefox", "Firefox", r"C:\Firefox\firefox.exe", "firefox"))
+        self.assertIn("-new-instance", command)
+        self.assertIn("-no-remote", command)
+        self.assertIn(str(self.profile), command)
+        self.assertNotIn("--user-data-dir", " ".join(command))
+
+    def test_chrome_uses_a_private_user_data_dir(self) -> None:
+        command = self._command(Browser("chrome", "Google Chrome", r"C:\Chrome\chrome.exe"))
+        self.assertIn(f"--user-data-dir={self.profile}", command)
+        self.assertIn("--no-first-run", command)
+        self.assertIn("--no-default-browser-check", command)
+        self.assertIn("--disable-default-apps", command)
+
+    def test_window_titles_are_not_used_for_closing(self) -> None:
+        import synapse.browser as browser_module
+
+        self.assertFalse(hasattr(browser_module, "close_site_windows"))
+
+
+class CloseAllSafetyTests(unittest.TestCase):
+    class _Proc:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+        def poll(self):
+            return None
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows executable check")
+    def test_foreign_executable_is_not_touched(self) -> None:
+        launcher = BrowserLauncher(Path("."), lambda _message: None)
+        launcher._procs["gemini"] = self._Proc(4242)
+        launcher._exes["gemini"] = "chrome.exe"
+        with (
+            mock.patch("synapse.browser._process_exe", return_value="firefox.exe"),
+            mock.patch("synapse.browser.close_tree_windows") as close,
+            mock.patch("synapse.browser.kill_tree") as kill,
+        ):
+            launcher.close_all()
+        close.assert_not_called()
+        kill.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows executable check")
+    def test_own_browser_is_closed_by_pid(self) -> None:
+        launcher = BrowserLauncher(Path("."), lambda _message: None)
+        launcher._procs["gemini"] = self._Proc(4242)
+        launcher._exes["gemini"] = "chrome.exe"
+        with (
+            mock.patch("synapse.browser._process_exe", return_value="chrome.exe"),
+            mock.patch("synapse.browser.close_tree_windows", return_value=1) as close,
+            mock.patch("synapse.browser.kill_tree") as kill,
+            mock.patch("synapse.browser.time.sleep"),
+            mock.patch("synapse.browser.time.monotonic", side_effect=[0.0, 0.0, 3.0]),
+        ):
+            launcher.close_all()
+        close.assert_called_once_with(4242)
+        kill.assert_called_once_with(4242)
 
 
 class ProcessTreeTests(unittest.TestCase):

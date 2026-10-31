@@ -36,21 +36,24 @@ from .theme import (
 
 # Windows virtual-key codes are layout independent.  Keysym names are not:
 # with the Russian layout Tk reports ``Cyrillic_es`` for the physical C key.
-_WIN_KEYCODES = {65: "a", 67: "c", 86: "v", 88: "x"}
+_WIN_KEYCODES = {65: "a", 67: "c", 86: "v", 88: "x", 89: "y", 90: "z"}
 _CYRILLIC_KEYSYMS = {
     "cyrillic_ef": "a",
     "cyrillic_es": "c",
     "cyrillic_em": "v",
     "cyrillic_che": "x",
+    "cyrillic_en": "y",
+    "cyrillic_ya": "z",
 }
-_CLIPBOARD_ACTIONS = {"a", "c", "v", "x"}
+_TEXT_ACTIONS = {"a", "c", "v", "x", "y", "z"}
+_SHIFT_MASK = 0x0001
 
 
 def clipboard_key(event) -> str | None:
-    """Map a key press to a clipboard action regardless of keyboard layout."""
+    """Map a key press to a text action regardless of keyboard layout."""
     keysym = str(getattr(event, "keysym", "") or "").lower()
     key = _CYRILLIC_KEYSYMS.get(keysym, keysym)
-    if key in _CLIPBOARD_ACTIONS:
+    if key in _TEXT_ACTIONS:
         return key
     if sys.platform == "win32":
         try:
@@ -61,17 +64,23 @@ def clipboard_key(event) -> str | None:
 
 
 def attach_clipboard(widget: tk.Misc, readonly: bool = False) -> None:
-    """Layout-independent Ctrl+C/V/X/A for Entry, Text and ttk.Spinbox.
+    """Layout-independent Ctrl+C/V/X/A/Z/Y for Entry, Text and ttk.Spinbox.
 
     The widget-level binding runs before Tk's class bindings, performs the
     action once and returns ``break``, so the same keys keep working with the
-    Latin layout as well.
+    Latin layout as well.  Ctrl+Shift+Z is redo, like in most editors.
     """
 
-    events = {"c": "<<Copy>>", "x": "<<Cut>>", "v": "<<Paste>>"}
+    events = {
+        "c": "<<Copy>>",
+        "x": "<<Cut>>",
+        "v": "<<Paste>>",
+        "z": "<<Undo>>",
+        "y": "<<Redo>>",
+    }
 
     def run(_event, action: str) -> str:
-        if action in {"x", "v"} and readonly:
+        if action in {"x", "v", "z", "y"} and readonly:
             return "break"
         try:
             if action == "a":
@@ -86,6 +95,8 @@ def attach_clipboard(widget: tk.Misc, readonly: bool = False) -> None:
         key = clipboard_key(event)
         if key is None:
             return None
+        if key == "z" and int(getattr(event, "state", 0) or 0) & _SHIFT_MASK:
+            key = "y"
         return run(event, key)
 
     widget.bind("<Control-KeyPress>", on_ctrl, add="+")
@@ -159,14 +170,140 @@ def _popup(menu: tk.Menu, event) -> None:
             pass
 
 
-def attach_entry_menu(entry: tk.Misc, readonly: bool = False) -> None:
-    """Right-click menu + clipboard shortcuts for text fields.
+class _UndoHistory:
+    """Undo/redo for ``tk.Entry`` and ``ttk.Spinbox``.
+
+    Tk 8.6 only has undo inside ``Text``; entries have no built-in history.
+    Snapshots are collected through the widget's text variable, and a burst of
+    typing is merged into one step after a short idle pause, so Ctrl+Z reverts
+    the whole burst instead of a single character.
+    """
+
+    MAX_STATES = 200
+    IDLE_MS = 700
+
+    def __init__(self, widget: tk.Misc, variable: tk.Variable | None = None):
+        self.widget = widget
+        self._states: list[tuple[str, int]] = [self._snapshot()]
+        self._index = 0
+        self._pending: tuple[str, int] | None = None
+        self._timer: str | None = None
+        self._applying = False
+        if variable is not None:
+            try:
+                variable.trace_add("write", self._on_variable)
+            except (tk.TclError, AttributeError):
+                pass
+        widget.bind("<KeyRelease>", self._on_change, add="+")
+        for event in ("<<Paste>>", "<<Cut>>", "<<Clear>>"):
+            widget.bind(event, self._on_change, add="+")
+
+    def _snapshot(self) -> tuple[str, int]:
+        try:
+            text = self.widget.get()
+            cursor = int(self.widget.index("insert"))
+        except (tk.TclError, ValueError):
+            return "", 0
+        return text, cursor
+
+    def _on_variable(self, *_args) -> None:
+        # The Tcl variable trace fires before the widget repaints with the new
+        # text, so the snapshot must be taken on idle, not right now.
+        if self._applying:
+            return
+        try:
+            self.widget.after_idle(self._on_change)
+        except tk.TclError:
+            pass
+
+    def _on_change(self, _event=None) -> None:
+        if self._applying:
+            return
+        snap = self._snapshot()
+        if snap == self._pending:
+            return
+        self._pending = snap
+        if self._timer is not None:
+            try:
+                self.widget.after_cancel(self._timer)
+            except tk.TclError:
+                pass
+        self._timer = self.widget.after(self.IDLE_MS, self._commit)
+
+    def _commit(self) -> None:
+        self._timer = None
+        snap = self._pending
+        self._pending = None
+        if snap is None or snap == self._states[self._index]:
+            return
+        del self._states[self._index + 1:]
+        self._states.append(snap)
+        if len(self._states) > self.MAX_STATES:
+            del self._states[: len(self._states) - self.MAX_STATES]
+        self._index = len(self._states) - 1
+
+    def _cancel(self) -> None:
+        if self._timer is not None:
+            try:
+                self.widget.after_cancel(self._timer)
+            except tk.TclError:
+                pass
+            self._timer = None
+
+    def _restore(self, state: tuple[str, int]) -> None:
+        text, cursor = state
+        self._applying = True
+        try:
+            self.widget.delete(0, "end")
+            self.widget.insert(0, text)
+            self.widget.icursor(min(cursor, len(text)))
+            self.widget.selection_clear()
+        except tk.TclError:
+            pass
+        finally:
+            self._applying = False
+
+    def undo(self) -> str:
+        self._cancel()
+        if self._pending is not None:
+            self._commit()
+        if self._index > 0:
+            self._index -= 1
+            self._restore(self._states[self._index])
+        return "break"
+
+    def redo(self) -> str:
+        self._cancel()
+        if self._pending is not None:
+            self._commit()
+        if self._index < len(self._states) - 1:
+            self._index += 1
+            self._restore(self._states[self._index])
+        return "break"
+
+
+def attach_undo(widget: tk.Misc, variable: tk.Variable | None = None) -> _UndoHistory:
+    """Install undo/redo on an entry-like widget and wire ``<<Undo>>`` events."""
+    history = _UndoHistory(widget, variable)
+    widget.bind("<<Undo>>", lambda _event: history.undo(), add="+")
+    widget.bind("<<Redo>>", lambda _event: history.redo(), add="+")
+    return history
+
+
+def attach_entry_menu(
+    entry: tk.Misc,
+    readonly: bool = False,
+    variable: tk.Variable | None = None,
+) -> None:
+    """Right-click menu + clipboard/undo shortcuts for text fields.
 
     Works for ``tk.Entry``, ``ttk.Entry`` and ``ttk.Spinbox``; the generic
     shortcuts are installed separately so they also survive a non-Latin
     keyboard layout.
     """
     menu = _popup_menu(entry)
+    if not readonly:
+        attach_undo(entry, variable)
 
     def copy() -> None:
         try:
@@ -192,7 +329,22 @@ def attach_entry_menu(entry: tk.Misc, readonly: bool = False) -> None:
         except tk.TclError:
             pass
 
+    def undo() -> None:
+        try:
+            entry.event_generate("<<Undo>>")
+        except tk.TclError:
+            pass
+
+    def redo() -> None:
+        try:
+            entry.event_generate("<<Redo>>")
+        except tk.TclError:
+            pass
+
     if not readonly:
+        menu.add_command(label="Отменить", accelerator="Ctrl+Z", command=undo)
+        menu.add_command(label="Повторить", accelerator="Ctrl+Y", command=redo)
+        menu.add_separator()
         menu.add_command(label="Вырезать", command=cut)
     menu.add_command(label="Копировать", command=copy)
     if not readonly:
@@ -205,8 +357,25 @@ def attach_entry_menu(entry: tk.Misc, readonly: bool = False) -> None:
 
 
 def attach_text_menu(text: tk.Text, on_clear=None, readonly: bool = True) -> None:
-    """Right-click menu for the log: copy, select all, optionally clear."""
+    """Right-click menu for a Text widget: undo, copy, select all, clear."""
     menu = _popup_menu(text)
+    if not readonly:
+        try:
+            text.configure(undo=True, autoseparators=True, maxundo=-1)
+        except tk.TclError:
+            pass
+
+    def undo() -> None:
+        try:
+            text.event_generate("<<Undo>>")
+        except tk.TclError:
+            pass
+
+    def redo() -> None:
+        try:
+            text.event_generate("<<Redo>>")
+        except tk.TclError:
+            pass
 
     def copy() -> None:
         try:
@@ -220,6 +389,10 @@ def attach_text_menu(text: tk.Text, on_clear=None, readonly: bool = True) -> Non
         except tk.TclError:
             pass
 
+    if not readonly:
+        menu.add_command(label="Отменить", accelerator="Ctrl+Z", command=undo)
+        menu.add_command(label="Повторить", accelerator="Ctrl+Y", command=redo)
+        menu.add_separator()
     menu.add_command(label="Копировать", command=copy)
     menu.add_command(label="Выделить всё", command=select_all)
     if on_clear is not None:
@@ -452,7 +625,7 @@ class Field(tk.Frame):
         self.entry.pack(fill="both", expand=True, padx=9, pady=5)
         self.entry.bind("<FocusIn>", self._on_focus, add="+")
         self.entry.bind("<FocusOut>", self._on_blur, add="+")
-        attach_entry_menu(self.entry, readonly=readonly)
+        attach_entry_menu(self.entry, readonly=readonly, variable=textvariable)
 
     def _on_focus(self, _event=None) -> None:
         self.configure(highlightbackground=ACCENT)
