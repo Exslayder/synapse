@@ -137,6 +137,7 @@ struct Shared {
 }
 
 static STATE: OnceLock<Shared> = OnceLock::new();
+static START: OnceLock<std::time::Instant> = OnceLock::new();
 
 fn direct_hosts_from_sites(sites: &[Site]) -> Vec<String> {
     sites
@@ -289,24 +290,34 @@ fn firefox_display_name(path: &Path) -> String {
 fn system_default_browser() -> Option<String> {
     static CACHE: OnceLock<String> = OnceLock::new();
     let value = CACHE.get_or_init(|| {
-        let output = Command::new("reg")
-            .args([
-                "query",
-                r"HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice",
-                "/v",
-                "ProgId",
-            ])
-            .output()
-            .ok();
-        let text = output
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default()
+        use windows::core::w;
+        use windows::Win32::System::Registry::{
+            RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ,
+        };
+        let mut buffer = [0u16; 512];
+        let mut size = (buffer.len() * std::mem::size_of::<u16>()) as u32;
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                w!("Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice"),
+                w!("ProgId"),
+                RRF_RT_REG_SZ,
+                None,
+                Some(buffer.as_mut_ptr() as *mut _),
+                Some(&mut size),
+            )
+        };
+        if status.is_err() {
+            return String::new();
+        }
+        let value = String::from_utf16_lossy(&buffer)
+            .trim_end_matches('\0')
             .to_ascii_lowercase();
-        if text.contains("firefox") {
+        if value.contains("firefox") {
             "firefox".to_string()
-        } else if text.contains("chrome") {
+        } else if value.contains("chrome") {
             "chrome".to_string()
-        } else if text.contains("edge") {
+        } else if value.contains("edge") {
             "edge".to_string()
         } else {
             String::new()
@@ -1463,6 +1474,9 @@ fn cleanup_stale_browsers(state: &Shared) {
     }
     let sites: Vec<Site> = state.config.lock().unwrap().sites.clone();
     for site in sites {
+        if state.pids.lock().unwrap().contains_key(&site.id) {
+            continue;
+        }
         let profile = state.base.join("profiles").join(safe_id(&site.id));
         let Some(pid) = read_pid_file(&profile) else {
             continue;
@@ -1570,6 +1584,7 @@ fn run_doh_check(host: &str) -> i32 {
 }
 
 fn main() {
+    START.get_or_init(std::time::Instant::now);
     if let Some(host) = std::env::args()
         .skip(1)
         .find_map(|a| a.strip_prefix("--doh-check=").map(|s| s.to_string()))
@@ -1675,7 +1690,14 @@ fn main() {
             };
             let _ = STATE.set(shared.clone());
             app.manage(shared.clone());
-            cleanup_stale_browsers(&shared);
+
+            {
+                let cleanup = shared.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1200));
+                    cleanup_stale_browsers(&cleanup);
+                });
+            }
 
             {
                 let warmer = shared.clone();
@@ -1754,6 +1776,13 @@ fn main() {
             }
 
             log_line(&base, "info", "setup: готово");
+            if let Some(start) = START.get() {
+                log_line(
+                    &base,
+                    "info",
+                    &format!("запуск: готово за {} мс", start.elapsed().as_millis()),
+                );
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
