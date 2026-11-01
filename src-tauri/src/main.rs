@@ -4,9 +4,10 @@ mod doh;
 mod proxy;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 use std::path::{Path, PathBuf};
@@ -1195,8 +1196,68 @@ struct UpdateInfo {
     current: String,
     latest: String,
     url: String,
-    notes: String,
     installer: String,
+    mode: String,
+    can_self_update: bool,
+}
+
+#[derive(Default, Clone)]
+struct ReleaseAsset {
+    url: String,
+    sha256: String,
+}
+
+struct LatestRelease {
+    latest: String,
+    url: String,
+    portable: ReleaseAsset,
+    installer: ReleaseAsset,
+    msi: ReleaseAsset,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum InstallKind {
+    Portable,
+    Nsis,
+    Msi,
+}
+
+impl InstallKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            InstallKind::Portable => "portable",
+            InstallKind::Nsis => "nsis",
+            InstallKind::Msi => "msi",
+        }
+    }
+}
+
+fn install_kind(exe: &Path) -> InstallKind {
+    if let Some(dir) = exe.parent() {
+        if dir.join("uninstall.exe").is_file() {
+            return InstallKind::Nsis;
+        }
+    }
+    let lower = exe.to_string_lossy().to_ascii_lowercase();
+    let mut roots: Vec<String> = Vec::new();
+    for key in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Ok(value) = std::env::var(key) {
+            let value = value.trim().to_ascii_lowercase();
+            if !value.is_empty() {
+                roots.push(format!("{value}\\"));
+            }
+        }
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let local = local.trim().to_ascii_lowercase();
+        if !local.is_empty() {
+            roots.push(format!("{local}\\programs\\"));
+        }
+    }
+    if roots.iter().any(|root| lower.starts_with(root)) {
+        return InstallKind::Msi;
+    }
+    InstallKind::Portable
 }
 
 fn version_parts(text: &str) -> Vec<u64> {
@@ -1225,7 +1286,17 @@ fn version_is_newer(latest: &str, current: &str) -> bool {
     false
 }
 
-fn check_update_impl() -> Result<UpdateInfo, String> {
+fn asset_digest(asset: &serde_json::Value) -> String {
+    asset
+        .get("digest")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim()
+        .trim_start_matches("sha256:")
+        .to_ascii_lowercase()
+}
+
+fn latest_release() -> Result<LatestRelease, String> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(format!("Synapse/{APP_VERSION}"))
         .timeout(Duration::from_secs(8))
@@ -1247,7 +1318,7 @@ fn check_update_impl() -> Result<UpdateInfo, String> {
         .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))?;
     let tag = data
         .get("tag_name")
-        .and_then(|v| v.as_str())
+        .and_then(|value| value.as_str())
         .unwrap_or("")
         .trim();
     let latest = tag.trim_start_matches(['v', 'V']).to_string();
@@ -1256,50 +1327,64 @@ fn check_update_impl() -> Result<UpdateInfo, String> {
     }
     let url = data
         .get("html_url")
-        .and_then(|v| v.as_str())
+        .and_then(|value| value.as_str())
         .unwrap_or("")
         .to_string();
-    let notes = data
-        .get("body")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let mut installer = String::new();
-    let mut fallback_installer = String::new();
-    if let Some(assets) = data.get("assets").and_then(|v| v.as_array()) {
+    let mut release = LatestRelease {
+        latest,
+        url,
+        portable: ReleaseAsset::default(),
+        installer: ReleaseAsset::default(),
+        msi: ReleaseAsset::default(),
+    };
+    if let Some(assets) = data.get("assets").and_then(|value| value.as_array()) {
         for asset in assets {
             let name = asset
                 .get("name")
-                .and_then(|v| v.as_str())
+                .and_then(|value| value.as_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
             let link = asset
                 .get("browser_download_url")
-                .and_then(|v| v.as_str())
+                .and_then(|value| value.as_str())
                 .unwrap_or("");
             if link.is_empty() {
                 continue;
             }
-            if name.ends_with("-setup.exe") {
-                installer = link.to_string();
-                break;
-            }
-            if fallback_installer.is_empty() && name.ends_with(".exe") {
-                fallback_installer = link.to_string();
+            let item = ReleaseAsset {
+                url: link.to_string(),
+                sha256: asset_digest(asset),
+            };
+            if name == "synapse.exe" {
+                release.portable = item;
+            } else if name.ends_with("-setup.exe") {
+                release.installer = item;
+            } else if name.ends_with(".msi") {
+                release.msi = item;
             }
         }
     }
-    if installer.is_empty() {
-        installer = fallback_installer;
-    }
+    Ok(release)
+}
+
+fn check_update_impl() -> Result<UpdateInfo, String> {
+    let release = latest_release()?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let kind = install_kind(&exe);
+    let asset = match kind {
+        InstallKind::Portable => &release.portable,
+        InstallKind::Nsis => &release.installer,
+        InstallKind::Msi => &release.msi,
+    };
+    let can_self_update = !asset.url.is_empty() && !asset.sha256.is_empty();
     Ok(UpdateInfo {
-        available: version_is_newer(&latest, APP_VERSION),
+        available: version_is_newer(&release.latest, APP_VERSION),
         current: APP_VERSION.to_string(),
-        latest,
-        url,
-        notes,
-        installer,
+        latest: release.latest,
+        url: release.url,
+        installer: release.installer.url,
+        mode: kind.as_str().to_string(),
+        can_self_update,
     })
 }
 
@@ -1351,6 +1436,145 @@ fn open_release(url: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Не удалось открыть браузер: {e}"))?;
     Ok(())
+}
+
+fn download_verified(url: &str, target: &Path, expected: &str) -> Result<(), String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(format!("Synapse/{APP_VERSION}"))
+        .timeout(Duration::from_secs(180))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let mut response = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("Не удалось скачать обновление: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("GitHub ответил {}", response.status()));
+    }
+    let mut file = fs::File::create(target).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = response.read(&mut buffer).map_err(|e| e.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        file.write_all(&buffer[..read]).map_err(|e| e.to_string())?;
+    }
+    drop(file);
+    let actual: String = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if actual != expected {
+        let _ = fs::remove_file(target);
+        return Err("Контрольная сумма обновления не совпала".into());
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct UpdateOutcome {
+    action: String,
+    path: String,
+    file: String,
+}
+
+fn downloads_dir() -> PathBuf {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+
+    let mut buffer = [0u16; 1024];
+    let mut size = (buffer.len() * std::mem::size_of::<u16>()) as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders"),
+            w!("{374DE290-123F-4565-9164-39C4925E467B}"),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buffer.as_mut_ptr() as *mut _),
+            Some(&mut size),
+        )
+    };
+    if status.is_ok() {
+        let value = String::from_utf16_lossy(&buffer)
+            .trim_end_matches('\0')
+            .trim()
+            .to_string();
+        if !value.is_empty() {
+            return PathBuf::from(value);
+        }
+    }
+    PathBuf::from(std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into())).join("Downloads")
+}
+
+#[tauri::command]
+fn apply_update(state: State<Shared>) -> Result<UpdateOutcome, String> {
+    let release = latest_release()?;
+    if !version_is_newer(&release.latest, APP_VERSION) {
+        return Err("Установлена последняя версия".into());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let kind = install_kind(&exe);
+    let (asset, file_name) = match kind {
+        InstallKind::Portable => (&release.portable, format!("Synapse-{}.exe", release.latest)),
+        InstallKind::Nsis => (
+            &release.installer,
+            format!("Synapse-{}-setup.exe", release.latest),
+        ),
+        InstallKind::Msi => (&release.msi, format!("Synapse-{}.msi", release.latest)),
+    };
+    if asset.url.is_empty() {
+        return Err("В релизе нет подходящего файла обновления".into());
+    }
+    if asset.sha256.is_empty() {
+        return Err("В релизе нет контрольной суммы, скачайте обновление вручную".into());
+    }
+
+    let dir = downloads_dir();
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let target = dir.join(&file_name);
+    log_line(
+        &state.base,
+        "info",
+        &format!("обновление {}: скачивание {}", release.latest, asset.url),
+    );
+    download_verified(&asset.url, &target, &asset.sha256)?;
+    let mut survived = true;
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_millis(500));
+        if !target.is_file() {
+            survived = false;
+            break;
+        }
+    }
+    if !survived {
+        log_line(
+            &state.base,
+            "warn",
+            "обновление: скачанный файл удалён антивирусом",
+        );
+        return Err(
+            "Антивирус удалил скачанный файл. Скачайте обновление со страницы релиза".into(),
+        );
+    }
+    log_line(
+        &state.base,
+        "info",
+        &format!("обновление: сохранено в {}", target.display()),
+    );
+    let _ = Command::new("explorer.exe")
+        .arg(format!("/select,{}", target.display()))
+        .spawn();
+    Ok(UpdateOutcome {
+        action: "downloaded".into(),
+        path: target.to_string_lossy().into(),
+        file: file_name,
+    })
 }
 
 #[tauri::command]
@@ -2250,6 +2474,7 @@ fn main() {
             open_site,
             check_update,
             open_release,
+            apply_update,
             open_all,
             reorder_sites,
             apply_pin_order,

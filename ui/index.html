@@ -144,6 +144,7 @@
   .update .dismiss{width:28px;height:28px;border:0;background:transparent;color:var(--muted);font-size:18px;
     line-height:1;cursor:pointer;border-radius:8px}
   .update .dismiss:hover{color:var(--text);background:rgba(255,255,255,.07)}
+  .update .dismiss:disabled{opacity:.4;cursor:default}
   .update .btn{padding:8px 16px}
 
   @media (max-width:820px){
@@ -433,11 +434,49 @@
       event.preventDefault();
       openRelease(info.url);
     };
-    $('updateNow').onclick = () => openRelease(info.installer || info.url);
+    const canSelfUpdate = !!info.can_self_update;
+    $('updateNow').textContent = canSelfUpdate ? 'Обновить' : 'Скачать';
+    $('updateNow').onclick = canSelfUpdate
+      ? () => startUpdate(info.mode)
+      : () => openRelease(info.installer || info.url);
     $('updateHide').onclick = () => {
       $('update').hidden = true;
     };
     $('update').hidden = false;
+  }
+
+  async function startUpdate(mode) {
+    if (!T) return;
+    const btn = $('updateNow');
+    const link = $('updateNotesLink');
+    const hide = $('updateHide');
+    btn.disabled = true;
+    hide.disabled = true;
+    link.style.pointerEvents = 'none';
+    btn.textContent = 'Скачивание…';
+    $('updateNote').textContent = 'Скачивание и проверка обновления';
+    try {
+      const result = await T.core.invoke('apply_update');
+      if (result && result.action === 'downloaded') {
+        const hint = mode === 'portable'
+          ? 'Замените старый exe вручную.'
+          : 'Запустите скачанный установщик.';
+        btn.textContent = 'Скачано';
+        $('updateNote').textContent = `Сохранено в «Загрузки»: ${result.file}. ${hint}`;
+        hide.disabled = false;
+        link.style.pointerEvents = '';
+        toast('Обновление скачано в «Загрузки»', 'ok');
+        return;
+      }
+      btn.textContent = 'Установка…';
+      $('updateNote').textContent = 'Установка, приложение перезапустится';
+    } catch (e) {
+      btn.disabled = false;
+      hide.disabled = false;
+      link.style.pointerEvents = '';
+      btn.textContent = 'Обновить';
+      $('updateNote').textContent = String(e);
+    }
   }
 
   async function openRelease(url) {

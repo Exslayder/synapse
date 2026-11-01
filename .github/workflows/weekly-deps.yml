@@ -54,10 +54,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $version = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           $tag = gh release list --limit 1 --json tagName --jq '.[0].tagName'
           if (-not $tag) {
             Write-Error "No release found to update"
             exit 1
+          }
+          if ($tag.TrimStart('v') -ne $version) {
+            Write-Host "Main version $version does not match latest release $tag; skipping asset refresh"
+            exit 0
           }
           Write-Host "Updating release $tag"
           gh release upload $tag dist-out/* --clobber
