@@ -76,7 +76,7 @@ jobs:
           Get-Content RELEASE_NOTES.md -Encoding UTF8
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Synapse ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
