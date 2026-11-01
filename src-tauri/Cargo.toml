@@ -1,6 +1,6 @@
 [package]
 name = "synapse"
-version = "2.0.2"
+version = "2.0.3"
 description = "Windows desktop AI hub for Gemini, ChatGPT, Claude and Grok behind a local DoH proxy"
 authors = ["Synapse contributors"]
 edition = "2021"
