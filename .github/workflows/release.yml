@@ -14,6 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -41,9 +43,41 @@ jobs:
           Copy-Item src-tauri/target/release/bundle/msi/*.msi dist-out/
           Get-ChildItem dist-out
 
+      - name: Build release notes
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $changelog = Get-Content CHANGELOG.md -Raw -Encoding UTF8
+          $pattern = '(?ms)^##\s+' + [regex]::Escape($version) + '\b.*?(?=^##\s|\z)'
+          $section = [regex]::Match($changelog, $pattern).Value.Trim()
+
+          $previous = git describe --tags --abbrev=0 "$tag^" 2>$null
+          if ($LASTEXITCODE -ne 0) { $previous = '' }
+
+          $notes = @()
+          if ($section) {
+            $break = $section.IndexOf("`n")
+            if ($break -ge 0) { $notes += $section.Substring($break + 1).Trim() }
+          } else {
+            Write-Host "CHANGELOG has no section for $version, using commits"
+            $range = if ($previous) { "$previous..$tag" } else { $tag }
+            $notes += (git log $range --no-merges --pretty=format:'- %s')
+          }
+          if ($previous) {
+            $notes += ''
+            $notes += "**Полный список изменений:** https://github.com/Exslayder/synapse/compare/$previous...$tag"
+          }
+
+          $body = ($notes -join "`n").Trim()
+          if (-not $body) { $body = "Synapse $version" }
+          [IO.File]::WriteAllText("$PWD\RELEASE_NOTES.md", $body, (New-Object Text.UTF8Encoding($false)))
+          Write-Host "--- release notes ---"
+          Get-Content RELEASE_NOTES.md -Encoding UTF8
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           name: Synapse ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
           files: dist-out/*

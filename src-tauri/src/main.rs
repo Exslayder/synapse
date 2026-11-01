@@ -137,6 +137,7 @@ struct Shared {
     direct_hosts: Arc<Mutex<Vec<String>>>,
     health: Arc<Mutex<HashMap<String, SiteHealth>>>,
     running_cache: Arc<Mutex<Vec<String>>>,
+    browser_cache: Arc<Mutex<Option<(String, String, BrowserInfo)>>>,
 }
 
 static STATE: OnceLock<Shared> = OnceLock::new();
@@ -239,15 +240,48 @@ fn browser_roots() -> Vec<PathBuf> {
 }
 
 fn chromium_candidates(kind: &str) -> Vec<PathBuf> {
-    let rel = match kind {
-        "chrome" => r"Google\Chrome\Application\chrome.exe",
-        "edge" => r"Microsoft\Edge\Application\msedge.exe",
+    let rels: &[&str] = match kind {
+        "chrome" => &[r"Google\Chrome\Application\chrome.exe"],
+        "edge" => &[r"Microsoft\Edge\Application\msedge.exe"],
+        "brave" => &[r"BraveSoftware\Brave-Browser\Application\brave.exe"],
+        "vivaldi" => &[r"Vivaldi\Application\vivaldi.exe"],
+        "opera" => &[r"Programs\Opera\opera.exe", r"Opera\opera.exe"],
         _ => return Vec::new(),
     };
-    browser_roots()
-        .into_iter()
-        .map(|root| root.join(rel))
-        .collect()
+    let mut out = Vec::new();
+    for root in browser_roots() {
+        for rel in rels {
+            out.push(root.join(rel));
+        }
+    }
+    out
+}
+
+fn chromium_display_name(kind: &str) -> &'static str {
+    match kind {
+        "edge" => "Microsoft Edge",
+        "brave" => "Brave",
+        "vivaldi" => "Vivaldi",
+        "opera" => "Opera",
+        _ => "Google Chrome",
+    }
+}
+
+fn browser_kind_from_file(name: &str) -> &'static str {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("firefox") {
+        "firefox"
+    } else if lower.contains("msedge") {
+        "edge"
+    } else if lower.contains("brave") {
+        "brave"
+    } else if lower.contains("vivaldi") {
+        "vivaldi"
+    } else if lower.contains("opera") {
+        "opera"
+    } else {
+        "chrome"
+    }
 }
 
 fn firefox_candidates() -> Vec<PathBuf> {
@@ -291,46 +325,41 @@ fn firefox_display_name(path: &Path) -> String {
 }
 
 fn system_default_browser() -> Option<String> {
-    static CACHE: OnceLock<String> = OnceLock::new();
-    let value = CACHE.get_or_init(|| {
-        use windows::core::w;
-        use windows::Win32::System::Registry::{
-            RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ,
-        };
-        let mut buffer = [0u16; 512];
-        let mut size = (buffer.len() * std::mem::size_of::<u16>()) as u32;
-        let status = unsafe {
-            RegGetValueW(
-                HKEY_CURRENT_USER,
-                w!("Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice"),
-                w!("ProgId"),
-                RRF_RT_REG_SZ,
-                None,
-                Some(buffer.as_mut_ptr() as *mut _),
-                Some(&mut size),
-            )
-        };
-        if status.is_err() {
-            return String::new();
-        }
-        let value = String::from_utf16_lossy(&buffer)
-            .trim_end_matches('\0')
-            .to_ascii_lowercase();
-        if value.contains("firefox") {
-            "firefox".to_string()
-        } else if value.contains("chrome") {
-            "chrome".to_string()
-        } else if value.contains("edge") {
-            "edge".to_string()
-        } else {
-            String::new()
-        }
-    });
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.clone())
+    use windows::core::w;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+
+    let mut buffer = [0u16; 512];
+    let mut size = (buffer.len() * std::mem::size_of::<u16>()) as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice"),
+            w!("ProgId"),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buffer.as_mut_ptr() as *mut _),
+            Some(&mut size),
+        )
+    };
+    if status.is_err() {
+        return None;
     }
+    let value = String::from_utf16_lossy(&buffer)
+        .trim_end_matches('\0')
+        .to_ascii_lowercase();
+    for (needle, kind) in [
+        ("firefox", "firefox"),
+        ("brave", "brave"),
+        ("vivaldi", "vivaldi"),
+        ("opera", "opera"),
+        ("chrome", "chrome"),
+        ("edge", "edge"),
+    ] {
+        if value.contains(needle) {
+            return Some(kind.to_string());
+        }
+    }
+    None
 }
 
 fn detect_browser(cfg: &AppConfig) -> Option<BrowserInfo> {
@@ -339,21 +368,13 @@ fn detect_browser(cfg: &AppConfig) -> Option<BrowserInfo> {
         if path.is_file() {
             let file = path
                 .file_name()
-                .map(|n| n.to_string_lossy().to_ascii_lowercase())
+                .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let kind = if file.contains("firefox") {
-                "firefox"
-            } else if file.contains("msedge") {
-                "edge"
-            } else {
-                "chrome"
-            };
+            let kind = browser_kind_from_file(&file);
             let name = if kind == "firefox" {
                 firefox_display_name(&path)
-            } else if kind == "edge" {
-                "Microsoft Edge".to_string()
             } else {
-                "Google Chrome".to_string()
+                chromium_display_name(kind).to_string()
             };
             return Some(BrowserInfo {
                 kind: kind.into(),
@@ -381,30 +402,23 @@ fn detect_browser(cfg: &AppConfig) -> Option<BrowserInfo> {
             .find(|path| path.is_file())
             .map(|path| BrowserInfo {
                 kind: kind.into(),
-                name: if kind == "edge" {
-                    "Microsoft Edge".into()
-                } else {
-                    "Google Chrome".into()
-                },
+                name: chromium_display_name(kind).to_string(),
                 path: path.to_string_lossy().into(),
                 found: true,
             })
     };
 
     let order: Vec<String> = match cfg.browser.as_str() {
-        "chrome" => vec!["chrome".into()],
-        "firefox" => vec!["firefox".into()],
-        "edge" => vec!["chrome".into(), "firefox".into()],
+        "chrome" | "firefox" | "brave" | "vivaldi" | "opera" => vec![cfg.browser.clone()],
         _ => {
             let mut list: Vec<String> = Vec::new();
-            // Prefer whatever Windows uses as the default browser, but only
-            // Chrome or Firefox: Edge is never selected automatically.
+            // Prefer the Windows default browser when it is one we can drive.
             if let Some(kind) = system_default_browser() {
-                if kind == "chrome" || kind == "firefox" {
+                if kind != "edge" {
                     list.push(kind);
                 }
             }
-            for fallback in ["chrome", "firefox"] {
+            for fallback in ["chrome", "firefox", "brave", "vivaldi", "opera"] {
                 if !list.iter().any(|k| k == fallback) {
                     list.push(fallback.to_string());
                 }
@@ -427,6 +441,22 @@ fn browser_info_or_missing(cfg: &AppConfig) -> BrowserInfo {
         path: String::new(),
         found: false,
     })
+}
+
+fn browser_info_cached(state: &Shared, cfg: &AppConfig) -> BrowserInfo {
+    let key_browser = cfg.browser.clone();
+    let key_path = cfg.browser_path.clone();
+    {
+        let cache = state.browser_cache.lock().unwrap();
+        if let Some((browser, path, info)) = cache.as_ref() {
+            if *browser == key_browser && *path == key_path {
+                return info.clone();
+            }
+        }
+    }
+    let info = browser_info_or_missing(cfg);
+    *state.browser_cache.lock().unwrap() = Some((key_browser, key_path, info.clone()));
+    info
 }
 
 fn safe_id(id: &str) -> String {
@@ -1153,6 +1183,176 @@ struct StateResponse {
     health: HashMap<String, SiteHealth>,
 }
 
+// ---------------------------------------------------------------- updates
+
+const UPDATE_REPO: &str = "Exslayder/synapse";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const RELEASE_PREFIX: &str = "https://github.com/Exslayder/synapse/";
+
+#[derive(Serialize, Clone)]
+struct UpdateInfo {
+    available: bool,
+    current: String,
+    latest: String,
+    url: String,
+    notes: String,
+    installer: String,
+}
+
+fn version_parts(text: &str) -> Vec<u64> {
+    text.trim()
+        .trim_start_matches(['v', 'V'])
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+fn version_is_newer(latest: &str, current: &str) -> bool {
+    let latest_parts = version_parts(latest);
+    let current_parts = version_parts(current);
+    if latest_parts.is_empty() || current_parts.is_empty() {
+        return false;
+    }
+    let len = latest_parts.len().max(current_parts.len());
+    for index in 0..len {
+        let a = latest_parts.get(index).copied().unwrap_or(0);
+        let b = current_parts.get(index).copied().unwrap_or(0);
+        if a != b {
+            return a > b;
+        }
+    }
+    false
+}
+
+fn check_update_impl() -> Result<UpdateInfo, String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(format!("Synapse/{APP_VERSION}"))
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get(format!(
+            "https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+        ))
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .map_err(|e| format!("GitHub недоступен: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("GitHub ответил {}", response.status()));
+    }
+    let data: serde_json::Value = response
+        .text()
+        .map_err(|e| e.to_string())
+        .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))?;
+    let tag = data
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let latest = tag.trim_start_matches(['v', 'V']).to_string();
+    if latest.is_empty() {
+        return Err("В ответе GitHub нет версии релиза".into());
+    }
+    let url = data
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let notes = data
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let mut installer = String::new();
+    let mut fallback_installer = String::new();
+    if let Some(assets) = data.get("assets").and_then(|v| v.as_array()) {
+        for asset in assets {
+            let name = asset
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let link = asset
+                .get("browser_download_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if link.is_empty() {
+                continue;
+            }
+            if name.ends_with("-setup.exe") {
+                installer = link.to_string();
+                break;
+            }
+            if fallback_installer.is_empty() && name.ends_with(".exe") {
+                fallback_installer = link.to_string();
+            }
+        }
+    }
+    if installer.is_empty() {
+        installer = fallback_installer;
+    }
+    Ok(UpdateInfo {
+        available: version_is_newer(&latest, APP_VERSION),
+        current: APP_VERSION.to_string(),
+        latest,
+        url,
+        notes,
+        installer,
+    })
+}
+
+#[tauri::command]
+fn check_update(state: State<Shared>) -> Result<Option<UpdateInfo>, String> {
+    let enabled = state.config.lock().unwrap().auto_check_updates;
+    if !enabled {
+        log_line(&state.base, "info", "проверка обновлений отключена в настройках");
+        return Ok(None);
+    }
+    let info = check_update_impl()?;
+    if info.available {
+        log_line(
+            &state.base,
+            "info",
+            &format!(
+                "доступно обновление: установлена {}, на GitHub {}",
+                info.current, info.latest
+            ),
+        );
+    }
+    Ok(Some(info))
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn compares_versions_numerically() {
+        assert!(version_is_newer("2.0.2", "2.0.1"));
+        assert!(version_is_newer("v2.1.0", "2.0.9"));
+        assert!(version_is_newer("3.0", "2.9.9"));
+        assert!(version_is_newer("2.0.10", "2.0.9"));
+        assert!(!version_is_newer("2.0.1", "2.0.1"));
+        assert!(!version_is_newer("2.0.0", "2.0.1"));
+        assert!(!version_is_newer("", "2.0.1"));
+    }
+}
+
+#[tauri::command]
+fn open_release(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if !url.starts_with(RELEASE_PREFIX) || url.len() <= RELEASE_PREFIX.len() {
+        return Err("Недопустимый адрес релиза".into());
+    }
+    Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn()
+        .map_err(|e| format!("Не удалось открыть браузер: {e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn get_state(state: State<Shared>) -> StateResponse {
     let cfg = state.config.lock().unwrap().clone();
@@ -1224,7 +1424,7 @@ fn get_state(state: State<Shared>) -> StateResponse {
     let proxy_port = *state.proxy_port.lock().unwrap();
     let health = state.health.lock().unwrap().clone();
     StateResponse {
-        browser: browser_info_or_missing(&cfg),
+        browser: browser_info_cached(&state, &cfg),
         base: state.base.to_string_lossy().into(),
         log_path: state
             .base
@@ -1287,6 +1487,7 @@ fn save_config(
     }
     log_line(&state.base, "info", "настройки сохранены");
     *state.config.lock().unwrap() = cfg;
+    *state.browser_cache.lock().unwrap() = None;
     Ok(get_state(state))
 }
 
@@ -1305,6 +1506,7 @@ fn open_site(id: String, state: State<Shared>) -> Result<String, String> {
         }
     }
     let worker = shared.clone();
+    *shared.browser_cache.lock().unwrap() = None;
     std::thread::spawn(move || match open_site_impl(&worker, &id) {
         Ok(msg) => log_line(&worker.base, "info", &format!("{id}: {msg}")),
         Err(err) => log_line(&worker.base, "warn", &format!("{id}: {err}")),
@@ -1913,6 +2115,7 @@ fn main() {
                 direct_hosts: direct_hosts.clone(),
                 health: Arc::new(Mutex::new(HashMap::new())),
                 running_cache: Arc::new(Mutex::new(Vec::new())),
+                browser_cache: Arc::new(Mutex::new(None)),
             };
             let _ = STATE.set(shared.clone());
             app.manage(shared.clone());
@@ -2045,6 +2248,8 @@ fn main() {
             get_state,
             save_config,
             open_site,
+            check_update,
+            open_release,
             open_all,
             reorder_sites,
             apply_pin_order,

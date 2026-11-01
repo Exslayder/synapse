@@ -35,8 +35,10 @@
     background:linear-gradient(150deg,#4c8dff,#8b5cf6 65%,#b45cf0);
     display:grid;place-items:center;box-shadow:0 12px 28px -12px rgba(76,141,255,.85),var(--glow);flex:0 0 auto}
   .logo svg{width:60%;height:60%;display:block}
+  .brand{min-width:0}
   .brand .name{font-size:clamp(17px,2.2vh,20px);font-weight:650;letter-spacing:.2px}
-  .brand .tag{font-size:clamp(11px,1.5vh,12.5px);color:var(--muted);margin-top:1px}
+  .brand .tag{font-size:clamp(11px,1.5vh,12.5px);color:var(--muted);margin-top:1px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .spacer{flex:1}
   .icon-btn{width:clamp(34px,4.2vh,40px);aspect-ratio:1;border-radius:11px;border:1px solid var(--line);
     background:var(--panel);color:var(--muted);cursor:pointer;display:grid;place-items:center;transition:.16s}
@@ -127,15 +129,40 @@
   .toast.ok{border-color:rgba(52,201,138,.35);color:#8ef0bd}
   .toast.err{border-color:rgba(239,95,95,.35);color:#ffb3b3}
 
+  .update{display:flex;flex-wrap:wrap;align-items:center;gap:12px 14px;padding:12px 14px;border-radius:14px;flex:0 0 auto;
+    border:1px solid rgba(76,141,255,.38);background:linear-gradient(120deg,rgba(76,141,255,.16),rgba(139,92,246,.14));
+    box-shadow:0 14px 32px -20px rgba(76,141,255,.95)}
+  .update[hidden]{display:none}
+  .update .badge{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;
+    box-shadow:0 8px 18px -10px rgba(76,141,255,.9)}
+  .update .badge svg{width:18px;height:18px}
+  .update .txt{flex:1 1 220px;min-width:0}
+  .update .txt .t{font-weight:640;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .update .txt .s{color:var(--muted);font-size:12px;margin-top:2px;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .update .acts{display:flex;align-items:center;gap:10px;flex:0 0 auto;margin-left:auto}
+  .update a.link{color:#9dc0ff;font-size:12px;text-decoration:none;border-bottom:1px dashed rgba(157,192,255,.5)}
+  .update a.link:hover{color:#cfe0ff}
+  .update .dismiss{width:28px;height:28px;border:0;background:transparent;color:var(--muted);font-size:18px;
+    line-height:1;cursor:pointer;border-radius:8px}
+  .update .dismiss:hover{color:var(--text);background:rgba(255,255,255,.07)}
+  .update .btn{padding:8px 16px}
+
   @media (max-width:820px){
-    .brand .tag{display:none}
     .card .chip{display:none}
     .card .more{display:none}
     .card .host{font-size:11.5px}
   }
+  @media (max-width:700px){
+    .brand .tag{white-space:normal;overflow:visible;text-overflow:clip}
+  }
+  @media (max-width:640px){
+    .update .acts{flex:1 1 100%;justify-content:flex-end}
+    .brand .tag{font-size:11px}
+  }
   @media (max-height:620px){
     .status{display:none}
-    .brand .tag{display:none}
   }
 </style>
 </head>
@@ -150,7 +177,7 @@
     </div>
     <div class="brand">
       <div class="name">Synapse</div>
-      <div class="tag">Gemini · ChatGPT · Claude · Grok — в одном окне, через свой DoH</div>
+      <div class="tag">Доступ к любой ИИ — в одном окне, через свой DoH</div>
     </div>
     <div class="spacer"></div>
     <button class="icon-btn" id="refresh" title="Обновить состояние">
@@ -163,6 +190,23 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
     </button>
   </header>
+
+  <div class="update" id="update" hidden>
+    <div class="badge" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 4v10"/><path d="m7.5 9.5 4.5 4.5 4.5-4.5"/><path d="M5 18h14"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <div class="t">Доступно обновление <span id="updateVersion">—</span></div>
+      <div class="s" id="updateNote">—</div>
+    </div>
+    <div class="acts">
+      <a class="link" id="updateNotesLink" href="#" hidden>Что нового</a>
+      <button class="btn" id="updateNow">Обновить</button>
+      <button class="dismiss" id="updateHide" title="Скрыть до следующего запуска">×</button>
+    </div>
+  </div>
 
   <section class="status">
     <div class="stat" title="Локальный прокси, через который браузеры Synapse резолвят адреса по DoH">
@@ -386,6 +430,63 @@
     container.addEventListener('pointercancel', finish);
   }
 
+  const HIDDEN_UPDATE_KEY = 'synapse-update-hidden';
+
+  function updateNoteLines(info) {
+    return String(info.notes || '')
+      .split('\n')
+      .map(line => line
+        .replace(/^[\s>]+/, '')
+        .replace(/^[-*+]\s+/, '')
+        .replace(/\*\*|__|`/g, '')
+        .trim())
+      .filter(Boolean)
+      .filter(line => !/^full changelog\b/i.test(line))
+      .filter(line => !/^https?:\/\/\S+$/i.test(line));
+  }
+
+  function updateNoteText(info, lines) {
+    const first = lines[0];
+    return first
+      ? `Установлена ${info.current} · ${first}`
+      : `Установлена ${info.current} · новая версия на GitHub`;
+  }
+
+  function showUpdate(info) {
+    if (!info || !info.available) return;
+    if (localStorage.getItem(HIDDEN_UPDATE_KEY) === info.latest) return;
+    $('updateVersion').textContent = info.latest;
+    const lines = updateNoteLines(info);
+    $('updateNote').textContent = updateNoteText(info, lines);
+    $('updateNote').title = lines.slice(0, 6).join('\n');
+    $('updateNotesLink').hidden = !info.url;
+    $('updateNotesLink').onclick = (event) => {
+      event.preventDefault();
+      openRelease(info.url);
+    };
+    $('updateNow').onclick = () => openRelease(info.installer || info.url);
+    $('updateHide').onclick = () => {
+      localStorage.setItem(HIDDEN_UPDATE_KEY, info.latest);
+      $('update').hidden = true;
+    };
+    $('update').hidden = false;
+  }
+
+  async function openRelease(url) {
+    if (!url) { toast('Ссылка на релиз недоступна', 'err'); return; }
+    if (!T) { window.open(url, '_blank'); return; }
+    try { await T.core.invoke('open_release', { url }); }
+    catch (e) { toast(String(e), 'err'); }
+  }
+
+  async function checkUpdate() {
+    if (!T) return;
+    try {
+      const info = await T.core.invoke('check_update');
+      if (info) showUpdate(info);
+    } catch (e) { /* тихо: нет сети или GitHub недоступен */ }
+  }
+
   async function openSite(id) {
     if (!T) { toast('Демо-режим: запуск недоступен', ''); return; }
     try {
@@ -453,6 +554,7 @@
       }
     });
     render();
+    if (T) setTimeout(checkUpdate, 900);
     $('refresh').addEventListener('click', () => {
       refresh().then(() => { runChecks(); toast('Обновлено'); });
     });
