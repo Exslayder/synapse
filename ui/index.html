@@ -424,35 +424,10 @@
     container.addEventListener('pointercancel', finish);
   }
 
-  const HIDDEN_UPDATE_KEY = 'synapse-update-hidden';
-
-  function updateNoteLines(info) {
-    return String(info.notes || '')
-      .split('\n')
-      .map(line => line
-        .replace(/^[\s>]+/, '')
-        .replace(/^[-*+]\s+/, '')
-        .replace(/\*\*|__|`/g, '')
-        .trim())
-      .filter(Boolean)
-      .filter(line => !/^full changelog\b/i.test(line))
-      .filter(line => !/^https?:\/\/\S+$/i.test(line));
-  }
-
-  function updateNoteText(info, lines) {
-    const first = lines[0];
-    return first
-      ? `Установлена ${info.current} · ${first}`
-      : `Установлена ${info.current} · новая версия на GitHub`;
-  }
-
   function showUpdate(info) {
     if (!info || !info.available) return;
-    if (localStorage.getItem(HIDDEN_UPDATE_KEY) === info.latest) return;
     $('updateVersion').textContent = info.latest;
-    const lines = updateNoteLines(info);
-    $('updateNote').textContent = updateNoteText(info, lines);
-    $('updateNote').title = lines.slice(0, 6).join('\n');
+    $('updateNote').textContent = `Установлена ${info.current}`;
     $('updateNotesLink').hidden = !info.url;
     $('updateNotesLink').onclick = (event) => {
       event.preventDefault();
@@ -460,7 +435,6 @@
     };
     $('updateNow').onclick = () => openRelease(info.installer || info.url);
     $('updateHide').onclick = () => {
-      localStorage.setItem(HIDDEN_UPDATE_KEY, info.latest);
       $('update').hidden = true;
     };
     $('update').hidden = false;
