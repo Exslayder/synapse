@@ -66,6 +66,21 @@
     border-radius:8px;cursor:pointer}
   .seg button.active{background:var(--panel-2);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.25)}
 
+  .mode{display:flex;flex:0 0 240px;background:var(--bg-2);border:1px solid var(--line);
+    border-radius:11px;padding:3px;gap:3px}
+  .mode button{flex:1;border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;
+    font-weight:600;padding:7px 10px;border-radius:8px;cursor:pointer;transition:.18s}
+  .mode button:hover{color:var(--text)}
+  .mode button.active{color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent-2));
+    box-shadow:0 6px 16px -9px rgba(76,141,255,.95)}
+  html[data-theme="light"] .mode button.active{color:#fff}
+
+  ::view-transition-old(root),
+  ::view-transition-new(root){animation-duration:.18s;animation-timing-function:cubic-bezier(.2,.7,.3,1)}
+  @media (prefers-reduced-motion: reduce){
+    ::view-transition-old(root),::view-transition-new(root){animation:none}
+  }
+
   .tabs{display:flex;gap:4px;margin-left:18px;background:var(--bg-2);border:1px solid var(--line);
     border-radius:10px;padding:2px}
   .tab{border:0;background:transparent;color:var(--muted);font:inherit;font-size:12.5px;
@@ -86,6 +101,7 @@
   .btn:hover{filter:brightness(1.08)}
   .btn.ghost{background:var(--panel);border:1px solid var(--line);color:var(--text);box-shadow:none}
   .btn.ghost:hover{border-color:#33415a}
+  .btn.small{padding:6px 10px;font-size:12px}
 
   .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
     background:#1d2632;border:1px solid var(--line);color:var(--text);font-size:12.5px;
@@ -98,9 +114,6 @@
 <body>
 <div class="win">
   <header>
-    <button class="back" title="Назад" onclick="location.href='index.html'">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-    </button>
     <div>
       <div class="title">Настройки</div>
     </div>
@@ -115,6 +128,19 @@
     <div id="pane-general">
 
     <div class="group">
+      <h3>Подключение</h3>
+      <div class="box">
+        <div class="row">
+          <div class="lbl">Режим</div>
+          <div class="mode" id="modeSwitch" role="switch" aria-checked="false">
+            <button type="button" data-mode="doh" class="active">DoH</button>
+            <button type="button" data-mode="vpn">VPN</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group" id="dohGroup">
       <h3>DNS-over-HTTPS</h3>
       <div class="box">
         <div class="row">
@@ -135,6 +161,29 @@
           <div class="lbl">Fallback на DNS/53</div>
           <div class="hint">Если DoH не ответил, запрос уйдёт по обычному DNS</div>
           <div class="switch" id="fallback" role="switch" aria-checked="false"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group" id="vpnGroup">
+      <h3>VPN</h3>
+      <div class="box">
+        <div class="row">
+          <div class="lbl">VPN-ссылка</div>
+          <div class="field">
+            <input id="vpnLink" type="password" autocomplete="off" spellcheck="false" placeholder="vless://...">
+          </div>
+        </div>
+        <div class="row">
+          <div class="lbl">SOCKS-порт</div>
+          <div class="field small"><input id="vpnSocksPort" inputmode="numeric" value="10808"></div>
+          <div class="hint">Локальный порт xray, только 127.0.0.1</div>
+        </div>
+        <div class="row">
+          <div class="lbl">Состояние</div>
+          <div class="hint" id="vpnStatus">—</div>
+          <button class="btn ghost small" id="vpnCheck">Проверить IP</button>
+          <button class="btn ghost small" id="vpnClear">Удалить ссылку</button>
         </div>
       </div>
     </div>
@@ -217,7 +266,7 @@
 
   <footer>
     <div class="note" id="note">Настройки сохраняются в config.json рядом с приложением</div>
-    <button class="btn ghost" onclick="location.href='index.html'">Отмена</button>
+    <button class="btn ghost" onclick="location.href='index.html'">Закрыть</button>
     <button class="btn" id="save">Сохранить</button>
   </footer>
 </div>
@@ -253,6 +302,59 @@
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let draftSites = [];
+  let tunnelInfo = null;
+  let connectionMode = 'doh';
+
+  function setMode(mode, animate = false) {
+    connectionMode = mode === 'vpn' ? 'vpn' : 'doh';
+    const apply = () => {
+      document.querySelectorAll('#modeSwitch button').forEach(button => {
+        button.classList.toggle('active', button.dataset.mode === connectionMode);
+      });
+      $('modeSwitch').setAttribute('aria-checked', String(connectionMode === 'vpn'));
+      $('dohGroup').hidden = connectionMode === 'vpn';
+      $('vpnGroup').hidden = connectionMode !== 'vpn';
+      updateVpnUi();
+    };
+    if (animate && document.startViewTransition) {
+      document.startViewTransition(apply);
+    } else {
+      apply();
+    }
+  }
+
+  function updateTunnelStatus(info) {
+    const el = $('vpnStatus');
+    if (!info) {
+      el.textContent = '—';
+      el.style.color = '';
+      return;
+    }
+    if (info.error) {
+      el.textContent = 'Ошибка: ' + info.error;
+      el.style.color = 'var(--err)';
+    } else if (info.enabled && info.running) {
+      el.textContent = 'Туннель запущен';
+      el.style.color = 'var(--ok)';
+    } else if (info.enabled) {
+      el.textContent = 'Включён, но туннель не запущен';
+      el.style.color = 'var(--warn)';
+    } else {
+      el.textContent = 'Выключен';
+      el.style.color = '';
+    }
+  }
+
+  function updateVpnUi() {
+    const on = connectionMode === 'vpn';
+    ['dohUrl', 'bootstrap', 'dohTimeout'].forEach(id => { $(id).disabled = on; });
+    const dohField = $('dohUrl').closest('.field');
+    if (dohField) dohField.style.opacity = on ? '0.55' : '1';
+    const bootstrapField = $('bootstrap').closest('.field');
+    if (bootstrapField) bootstrapField.style.opacity = on ? '0.55' : '1';
+    $('fallback').style.opacity = on ? '0.55' : '1';
+    $('fallback').style.pointerEvents = on ? 'none' : '';
+  }
 
   function makeSiteId(url, name) {
     let base = '';
@@ -292,7 +394,8 @@
     return ok;
   }
 
-  function fill(cfg, base) {
+  function fill(cfg, base, tunnel) {
+    tunnelInfo = tunnel || {};
     draftSites = JSON.parse(JSON.stringify(cfg.sites || []));
     renderSites();
     $('dohUrl').value = cfg.doh?.url || '';
@@ -307,6 +410,14 @@
     $('topmost').classList.toggle('on', !!cfg.window_topmost);
     $('closeBrowsers').classList.toggle('on', !!cfg.close_browsers_on_exit);
     $('autoUpdates').classList.toggle('on', !!cfg.auto_check_updates);
+    setMode(cfg.tunnel?.enabled ? 'vpn' : 'doh');
+    $('vpnSocksPort').value = cfg.tunnel?.socks_port || 10808;
+    $('vpnLink').value = '';
+    $('vpnLink').placeholder = tunnelInfo.configured
+      ? 'ссылка сохранена'
+      : 'vless://...';
+    updateTunnelStatus(tunnelInfo);
+    updateVpnUi();
   }
 
   function collect() {
@@ -316,6 +427,10 @@
     cfg.doh.bootstrap_ips = $('bootstrap').value.split(',').map(s => s.trim()).filter(Boolean);
     cfg.doh.fallback_tcp = isOn('fallback');
     cfg.doh.timeout = Number($('dohTimeout').value.replace(',', '.')) || 8;
+    cfg.tunnel = {
+      enabled: connectionMode === 'vpn',
+      socks_port: Number($('vpnSocksPort').value) || 10808
+    };
     cfg.proxy_port = Number($('proxyPort').value) || 8877;
     cfg.browser = $('browser').value;
     cfg.browser_path = $('browserPath').value.trim();
@@ -389,12 +504,13 @@
     if (T) {
       try {
         state = await T.core.invoke('get_state');
-        fill(state.config, state.base);
+        fill(state.config, state.base, state.tunnel);
       } catch (e) { toast(String(e), 'err'); }
     }
     if (!state) {
       fill({
         doh: { url: '', bootstrap_ips: [], fallback_tcp: true, timeout: 8 },
+        tunnel: { enabled: false, socks_port: 10808 },
         proxy_port: 8877, browser: 'auto', browser_path: '',
         browser_width: 1280, browser_height: 860,
         window_topmost: false, close_browsers_on_exit: true, auto_check_updates: true,
@@ -404,10 +520,45 @@
           { id: 'claude', name: 'Claude', url: 'https://claude.ai', pinned: false, enabled: true, direct: false },
           { id: 'grok', name: 'Grok', url: 'https://grok.com', pinned: false, enabled: true, direct: false }
         ]
-      }, '');
+      }, '', { enabled: false, configured: false, running: false, socks_port: 10808, error: '' });
     }
 
     bindSitesEditor();
+    document.querySelectorAll('#modeSwitch button').forEach(button => {
+      button.addEventListener('click', () => setMode(button.dataset.mode, true));
+    });
+
+    $('vpnCheck').addEventListener('click', async () => {
+      if (!T) { toast('Демо-режим: проверка недоступна', ''); return; }
+      if (connectionMode !== 'vpn') {
+        toast('Сначала выберите режим VPN', 'err');
+        return;
+      }
+      if (!state?.config?.tunnel?.enabled) {
+        toast('Сохраните настройки с включённым VPN', 'err');
+        return;
+      }
+      if ($('vpnLink').value.trim()) {
+        toast('Сначала сохраните настройки', 'err');
+        return;
+      }
+      try {
+        const ip = await T.core.invoke('check_tunnel');
+        $('vpnStatus').textContent = 'Внешний IP через VPN: ' + ip;
+        $('vpnStatus').style.color = 'var(--ok)';
+        toast('VPN отвечает', 'ok');
+      } catch (e) { toast(String(e), 'err'); }
+    });
+
+    $('vpnClear').addEventListener('click', async () => {
+      if (!T) return;
+      if (!confirm('Удалить сохранённую VPN-ссылку?')) return;
+      try {
+        state = await T.core.invoke('clear_tunnel_link');
+        fill(state.config, state.base, state.tunnel);
+        toast('VPN-ссылка удалена', 'ok');
+      } catch (e) { toast(String(e), 'err'); }
+    });
 
     $('save').addEventListener('click', async () => {
       if (!T) { toast('Демо-режим: сохранение недоступно', ''); return; }
@@ -417,6 +568,15 @@
           return;
         }
         const payload = collect();
+        const link = $('vpnLink').value.trim();
+        if (payload.tunnel.enabled && !link && !tunnelInfo?.configured) {
+          toast('Вставьте VPN-ссылку', 'err');
+          return;
+        }
+        if (link && !/^vless:\/\//i.test(link)) {
+          toast('Ссылка должна начинаться с vless://', 'err');
+          return;
+        }
         if (payload.sites.length !== draftSites.length) {
           toast('Проверьте адреса: нужен http(s):// и непустое название', 'err');
           return;
@@ -425,10 +585,13 @@
           toast('Должен остаться хотя бы один сайт', 'err');
           return;
         }
-        const updated = await T.core.invoke('save_config', { config: payload });
+        const args = { config: payload };
+        if (link) args.tunnelLink = link;
+        const updated = await T.core.invoke('save_config', args);
         state = updated;
-        fill(state.config, state.base);
-        toast('Сохранено', 'ok');
+        fill(state.config, state.base, state.tunnel);
+        if (updated.tunnel?.error) toast('VPN: ' + updated.tunnel.error, 'err');
+        else toast('Сохранено', 'ok');
       } catch (e) { toast(String(e), 'err'); }
     });
   })();

@@ -11,11 +11,18 @@ use crate::doh::DohResolver;
 
 pub type LogFn = Arc<dyn Fn(String) + Send + Sync>;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TunnelRoute {
+    pub enabled: bool,
+    pub socks_port: u16,
+}
+
 pub fn start(
     port: u16,
     resolver: Arc<DohResolver>,
     allowed_ports: Vec<u16>,
     direct_hosts: Arc<Mutex<Vec<String>>>,
+    tunnel: Arc<Mutex<TunnelRoute>>,
     log: LogFn,
 ) -> std::io::Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
@@ -28,8 +35,11 @@ pub fn start(
                     let log = log.clone();
                     let allowed = allowed_ports.clone();
                     let direct = direct_hosts.clone();
+                    let route = tunnel.clone();
                     thread::spawn(move || {
-                        if let Err(err) = handle(stream, resolver, allowed, direct, log.clone()) {
+                        if let Err(err) =
+                            handle(stream, resolver, allowed, direct, route, log.clone())
+                        {
                             log(format!("прокси: {err}"));
                         }
                     });
@@ -76,6 +86,7 @@ fn handle(
     resolver: Arc<DohResolver>,
     allowed: Vec<u16>,
     direct_hosts: Arc<Mutex<Vec<String>>>,
+    tunnel: Arc<Mutex<TunnelRoute>>,
     log: LogFn,
 ) -> Result<(), String> {
     client.set_read_timeout(Some(Duration::from_secs(120))).ok();
@@ -106,6 +117,10 @@ fn handle(
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_string();
     let target = parts.next().unwrap_or_default().to_string();
+    let route = tunnel
+        .lock()
+        .map(|route| *route)
+        .unwrap_or_default();
 
     if method.eq_ignore_ascii_case("CONNECT") {
         let (host, port) = split_authority(&target, 443)?;
@@ -113,11 +128,24 @@ fn handle(
             respond_error(&mut client, 403, "Forbidden");
             return Err(format!("порт {port} запрещён"));
         }
-        let ips = resolve_host(&resolver, &direct_hosts, &host)?;
-        let upstream = connect_any(&ips, port, &host)?;
+        let use_vpn = route.enabled && !is_direct(&direct_hosts, &host);
+        let (upstream, dns_label) = if use_vpn {
+            if route.socks_port == 0 {
+                respond_error(&mut client, 503, "VPN unavailable");
+                return Err("VPN включён, но туннель не запущен".into());
+            }
+            (connect_socks5(&host, port, route.socks_port)?, "remote".to_string())
+        } else {
+            let ips = resolve_host(&resolver, &direct_hosts, &host)?;
+            let label = ips
+                .first()
+                .map(|ip| ip.to_string())
+                .unwrap_or_default();
+            (connect_any(&ips, port, &host)?, label)
+        };
         log(format!(
-            "connect  {host}:{port}  DNS: {}",
-            ips.first().map(|ip| ip.to_string()).unwrap_or_default()
+            "connect  {host}:{port}  {}  DNS: {dns_label}",
+            if use_vpn { "VPN" } else { "direct" }
         ));
         client
             .write_all(b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: Synapse\r\n\r\n")
@@ -134,12 +162,25 @@ fn handle(
 
     // Plain HTTP through the proxy: absolute URI -> origin form.
     let (host, port, path) = parse_absolute_url(&target)?;
-    let ips = resolve_host(&resolver, &direct_hosts, &host)?;
+    let use_vpn = route.enabled && !is_direct(&direct_hosts, &host);
+    let (mut upstream, dns_label) = if use_vpn {
+        if route.socks_port == 0 {
+            respond_error(&mut client, 503, "VPN unavailable");
+            return Err("VPN включён, но туннель не запущен".into());
+        }
+        (connect_socks5(&host, port, route.socks_port)?, "remote".to_string())
+    } else {
+        let ips = resolve_host(&resolver, &direct_hosts, &host)?;
+        let label = ips
+            .first()
+            .map(|ip| ip.to_string())
+            .unwrap_or_default();
+        (connect_any(&ips, port, &host)?, label)
+    };
     log(format!(
-        "http     {host}:{port}  DNS: {}",
-        ips.first().map(|ip| ip.to_string()).unwrap_or_default()
+        "http     {host}:{port}  {}  DNS: {dns_label}",
+        if use_vpn { "VPN" } else { "direct" }
     ));
-    let mut upstream = connect_any(&ips, port, &host)?;
 
     let mut rewritten = format!("{method} {path} HTTP/1.1\r\n");
     for line in lines {
@@ -210,6 +251,75 @@ fn connect_any(ips: &[IpAddr], port: u16, host: &str) -> Result<TcpStream, Strin
     Err(last)
 }
 
+fn connect_socks5(host: &str, port: u16, socks_port: u16) -> Result<TcpStream, String> {
+    let proxy = SocketAddr::from(([127, 0, 0, 1], socks_port));
+    let mut stream = TcpStream::connect_timeout(&proxy, Duration::from_secs(5))
+        .map_err(|e| format!("VPN: SOCKS5 недоступен: {e}"))?;
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
+
+    stream
+        .write_all(&[0x05, 0x01, 0x00])
+        .map_err(|e| format!("VPN: {e}"))?;
+    let mut greeting = [0u8; 2];
+    stream
+        .read_exact(&mut greeting)
+        .map_err(|e| format!("VPN: {e}"))?;
+    if greeting != [0x05, 0x00] {
+        return Err("VPN: SOCKS5 не принял метод без авторизации".into());
+    }
+
+    let mut request = vec![0x05, 0x01, 0x00];
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            request.push(0x01);
+            request.extend_from_slice(&ip.octets());
+        }
+        Ok(IpAddr::V6(ip)) => {
+            request.push(0x04);
+            request.extend_from_slice(&ip.octets());
+        }
+        Err(_) => {
+            let bytes = host.as_bytes();
+            if bytes.is_empty() || bytes.len() > 255 {
+                return Err("VPN: слишком длинное имя хоста".into());
+            }
+            request.push(0x03);
+            request.push(bytes.len() as u8);
+            request.extend_from_slice(bytes);
+        }
+    }
+    request.extend_from_slice(&port.to_be_bytes());
+    stream
+        .write_all(&request)
+        .map_err(|e| format!("VPN: {e}"))?;
+
+    let mut reply = [0u8; 4];
+    stream
+        .read_exact(&mut reply)
+        .map_err(|e| format!("VPN: {e}"))?;
+    if reply[0] != 0x05 || reply[1] != 0x00 {
+        return Err(format!("VPN: SOCKS5 ответил кодом {}", reply[1]));
+    }
+    let address_len = match reply[3] {
+        0x01 => 4,
+        0x04 => 16,
+        0x03 => {
+            let mut len = [0u8; 1];
+            stream
+                .read_exact(&mut len)
+                .map_err(|e| format!("VPN: {e}"))?;
+            len[0] as usize
+        }
+        _ => return Err("VPN: неизвестный тип адреса SOCKS5".into()),
+    };
+    let mut rest = vec![0u8; address_len + 2];
+    stream
+        .read_exact(&mut rest)
+        .map_err(|e| format!("VPN: {e}"))?;
+    Ok(stream)
+}
+
 fn find_head_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -255,4 +365,40 @@ fn respond_error(client: &mut TcpStream, code: u16, reason: &str) {
         body.len()
     );
     let _ = client.write_all(response.as_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socks5_handshake_uses_domain_name() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut greeting = [0u8; 3];
+            socket.read_exact(&mut greeting).unwrap();
+            assert_eq!(greeting, [0x05, 0x01, 0x00]);
+            socket.write_all(&[0x05, 0x00]).unwrap();
+
+            let mut head = [0u8; 5];
+            socket.read_exact(&mut head).unwrap();
+            assert_eq!(head[0], 0x05);
+            assert_eq!(head[3], 0x03);
+            let mut host = vec![0u8; head[4] as usize];
+            socket.read_exact(&mut host).unwrap();
+            assert_eq!(host, b"example.com");
+            let mut port_bytes = [0u8; 2];
+            socket.read_exact(&mut port_bytes).unwrap();
+            assert_eq!(u16::from_be_bytes(port_bytes), 443);
+            socket
+                .write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0])
+                .unwrap();
+        });
+
+        let stream = connect_socks5("example.com", 443, port).unwrap();
+        drop(stream);
+        server.join().unwrap();
+    }
 }

@@ -38,6 +38,10 @@ jobs:
       - name: Update cargo dependencies
         run: cargo update --manifest-path src-tauri/Cargo.toml
 
+      - name: Fetch Xray core
+        shell: pwsh
+        run: ./.github/scripts/fetch-xray.ps1
+
       - name: Install frontend dependencies
         run: npm ci
 

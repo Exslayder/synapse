@@ -173,7 +173,7 @@
     </div>
     <div class="brand">
       <div class="name">Synapse</div>
-      <div class="tag">Доступ к любой ИИ — в одном окне, через свой DoH</div>
+      <div class="tag">Доступ к любой ИИ — в одном окне, через свой DoH или VPN</div>
     </div>
     <div class="spacer"></div>
     <button class="icon-btn" id="refresh" title="Обновить состояние">
@@ -209,8 +209,8 @@
       <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M12 4v16"/></svg>Локальный прокси</div>
       <div class="v"><span class="dot idle" id="proxyDot"></span><span id="proxyValue">—</span></div>
     </div>
-    <div class="stat" title="DoH не задан — используется системный DNS">
-      <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>DoH</div>
+    <div class="stat" title="Как Synapse выходит в интернет: DoH, VPN или системный DNS">
+      <div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/></svg>Подключение</div>
       <div class="v"><span class="dot warn" id="dohDot"></span><span id="dohValue">Не выбран</span></div>
     </div>
     <div class="stat" title="Сколько сайтов сейчас открыто в отдельных окнах браузера">
@@ -311,7 +311,8 @@
       health: state.health || {},
       browser: state.browser,
       proxy,
-      doh: (cfg.doh && cfg.doh.url) || ''
+      doh: (cfg.doh && cfg.doh.url) || '',
+      tunnel: cfg.tunnel || null
     });
     if (!force && sig === lastSig) return;
     lastSig = sig;
@@ -321,12 +322,18 @@
     $('openDot').className = 'dot ' + (running.length ? '' : 'idle');
     $('browserValue').textContent = state.browser && state.browser.found ? state.browser.name : 'Не найден';
     const doh = (cfg.doh && cfg.doh.url || '').trim();
-    $('dohValue').textContent = doh || 'Не выбран';
-    $('dohDot').className = 'dot ' + (doh ? '' : 'warn');
+    const vpn = !!(cfg.tunnel && cfg.tunnel.enabled);
+    $('dohValue').textContent = vpn ? 'VPN' : (doh || 'Не выбран');
+    $('dohDot').className = 'dot ' + ((vpn || doh) ? '' : 'warn');
+    $('dohValue').title = vpn
+      ? 'VPN: обычные сайты идут через туннель, DoH отключён'
+      : (doh ? 'DoH: DNS-запросы идут через ' + doh : 'DoH не задан — используется системный DNS');
     $('proxyValue').textContent = '127.0.0.1:' + proxy.port;
     $('proxyDot').className = 'dot ' + (proxy.running ? '' : 'idle');
     $('proxyValue').title = proxy.running
-      ? 'Прокси работает, DNS-запросы идут через ' + (doh || 'системный DNS')
+      ? (vpn
+          ? 'Прокси работает, трафик сайтов идёт через VPN'
+          : 'Прокси работает, DNS-запросы идут через ' + (doh || 'системный DNS'))
       : 'Прокси не запустился';
   }
 
