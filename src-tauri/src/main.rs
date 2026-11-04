@@ -1482,6 +1482,7 @@ struct LatestRelease {
     latest: String,
     url: String,
     portable: ReleaseAsset,
+    archive: ReleaseAsset,
     installer: ReleaseAsset,
     msi: ReleaseAsset,
 }
@@ -1605,6 +1606,7 @@ fn latest_release() -> Result<LatestRelease, String> {
         latest,
         url,
         portable: ReleaseAsset::default(),
+        archive: ReleaseAsset::default(),
         installer: ReleaseAsset::default(),
         msi: ReleaseAsset::default(),
     };
@@ -1628,6 +1630,8 @@ fn latest_release() -> Result<LatestRelease, String> {
             };
             if name == "synapse.exe" {
                 release.portable = item;
+            } else if name == "synapse_portable.zip" {
+                release.archive = item;
             } else if name.ends_with("-setup.exe") {
                 release.installer = item;
             } else if name.ends_with(".msi") {
@@ -1643,7 +1647,13 @@ fn check_update_impl() -> Result<UpdateInfo, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let kind = install_kind(&exe);
     let asset = match kind {
-        InstallKind::Portable => &release.portable,
+        InstallKind::Portable => {
+            if !release.archive.url.is_empty() {
+                &release.archive
+            } else {
+                &release.portable
+            }
+        }
         InstallKind::Nsis => &release.installer,
         InstallKind::Msi => &release.msi,
     };
@@ -1792,7 +1802,13 @@ fn apply_update(state: State<Shared>) -> Result<UpdateOutcome, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let kind = install_kind(&exe);
     let (asset, file_name) = match kind {
-        InstallKind::Portable => (&release.portable, format!("Synapse-{}.exe", release.latest)),
+        InstallKind::Portable => {
+            if !release.archive.url.is_empty() {
+                (&release.archive, "Synapse_portable.zip".to_string())
+            } else {
+                (&release.portable, format!("Synapse-{}.exe", release.latest))
+            }
+        }
         InstallKind::Nsis => (
             &release.installer,
             format!("Synapse-{}-setup.exe", release.latest),

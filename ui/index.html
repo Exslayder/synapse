@@ -445,7 +445,7 @@
     $('updateNow').textContent = canSelfUpdate ? 'Обновить' : 'Скачать';
     $('updateNow').onclick = canSelfUpdate
       ? () => startUpdate(info.mode)
-      : () => openRelease(info.installer || info.url);
+      : () => openRelease(info.url);
     $('updateHide').onclick = () => {
       $('update').hidden = true;
     };
@@ -466,7 +466,7 @@
       const result = await T.core.invoke('apply_update');
       if (result && result.action === 'downloaded') {
         const hint = mode === 'portable'
-          ? 'Замените старый exe вручную.'
+          ? 'Распакуйте архив и замените Synapse.exe и xray.exe.'
           : 'Запустите скачанный установщик.';
         btn.textContent = 'Скачано';
         $('updateNote').textContent = `Сохранено в «Загрузки»: ${result.file}. ${hint}`;
