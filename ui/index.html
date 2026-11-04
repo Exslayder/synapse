@@ -60,9 +60,15 @@
   .dot.idle{background:var(--faint);box-shadow:none}
 
   .sec-head{display:flex;align-items:center;gap:10px;flex:0 0 auto}
-  .sec-head h2{margin:0;font-size:15px;letter-spacing:.2px;color:var(--text);font-weight:700}
+  .sec-head h2{margin:0;font-size:15px;letter-spacing:.2px;color:var(--text);font-weight:700;
+    position:relative;cursor:help;outline:none}
+  .sec-head h2::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 9px);
+    width:max-content;max-width:280px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;
+    background:var(--panel-2);color:var(--muted);font-size:11.5px;font-weight:500;line-height:1.4;
+    box-shadow:var(--shadow);opacity:0;transform:translateY(-4px);pointer-events:none;
+    transition:opacity .15s ease,transform .15s ease;z-index:5}
+  .sec-head h2:hover::after,.sec-head h2:focus-visible::after{opacity:1;transform:none}
   .sec-head .line{height:1px;flex:1;background:linear-gradient(90deg,var(--line),transparent)}
-  .sec-head .note{font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sec-head .count{font-size:11px;color:var(--faint)}
   .sites-head{display:flex;flex-direction:column;flex:0 0 auto}
   .edit-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:0 0 auto;
@@ -272,7 +278,7 @@
   </section>
 
   <div class="sites-head">
-    <div class="sec-head"><h2>Сайты</h2><span class="note" title="У каждого сайта отдельный профиль браузера: куки и кеш не пересекаются">у каждого свой профиль</span><div class="line"></div>
+    <div class="sec-head"><h2 tabindex="0" data-tip="У каждого сайта отдельный профиль браузера: куки, кеш и сессии не пересекаются">Сайты</h2><div class="line"></div>
       <button class="edit-toggle" id="editList" title="Редактировать названия, адреса и состав списка">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L18 10a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>
         <span>Изменить</span>
