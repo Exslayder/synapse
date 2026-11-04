@@ -47,10 +47,30 @@
   .field:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(76,141,255,.14)}
   .field svg{width:14px;height:14px;color:var(--faint);flex:0 0 auto}
   .field input,.field select{flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--text);
-    font:inherit;font-size:13px}
+    font:inherit;font-size:13.5px;font-weight:500;letter-spacing:.1px}
+  .field input::placeholder{color:#6f7d91;opacity:1;font-size:12.5px;font-weight:450;letter-spacing:.15px}
+  html[data-theme="light"] .field input::placeholder{color:#7c899a}
   .field select option{background:var(--panel);color:var(--text)}
   .field.small{flex:0 0 120px}
   .field.invalid{border-color:var(--err);box-shadow:0 0 0 3px rgba(239,95,95,.15)}
+
+  .vpn-state{display:inline-flex;align-items:center;gap:8px;min-width:0;flex:1 1 190px;
+    padding:7px 11px;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);
+    font-family:"Segoe UI Variable Display","Segoe UI Variable Text",system-ui,sans-serif;
+    font-size:12.5px;font-weight:600;letter-spacing:.1px;color:var(--muted);
+    transition:background .25s ease,border-color .25s ease,color .25s ease,box-shadow .25s ease}
+  .vpn-state .vpn-dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:0 0 auto;
+    transition:background .25s ease,box-shadow .25s ease}
+  .vpn-state .vpn-state-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .vpn-state[data-state="on"]{color:#8ef0bd;border-color:rgba(52,201,138,.35);background:rgba(52,201,138,.1)}
+  .vpn-state[data-state="on"] .vpn-dot{background:var(--ok);box-shadow:0 0 0 4px rgba(52,201,138,.14);
+    animation:vpnPulse 2.2s ease-in-out infinite}
+  .vpn-state[data-state="warn"]{color:#f5cf7c;border-color:rgba(242,181,68,.4);background:rgba(242,181,68,.1)}
+  .vpn-state[data-state="warn"] .vpn-dot{background:var(--warn);box-shadow:0 0 0 4px rgba(242,181,68,.14)}
+  .vpn-state[data-state="err"]{color:#ffb3b3;border-color:rgba(239,95,95,.4);background:rgba(239,95,95,.1)}
+  .vpn-state[data-state="err"] .vpn-dot{background:var(--err);box-shadow:0 0 0 4px rgba(239,95,95,.14)}
+  @keyframes vpnPulse{0%,100%{box-shadow:0 0 0 3px rgba(52,201,138,.12)}50%{box-shadow:0 0 0 6px rgba(52,201,138,.04)}}
+  @media (prefers-reduced-motion: reduce){.vpn-state[data-state="on"] .vpn-dot{animation:none}}
 
   .switch{width:44px;height:25px;border-radius:999px;background:#2a3342;position:relative;cursor:pointer;
     flex:0 0 auto;transition:.18s;border:1px solid transparent}
@@ -177,7 +197,10 @@
         </div>
         <div class="row">
           <div class="lbl">Состояние</div>
-          <div class="hint" id="vpnStatus">—</div>
+          <div class="vpn-state" id="vpnStatus" data-state="off" aria-live="polite">
+            <span class="vpn-dot"></span>
+            <span class="vpn-state-text" id="vpnStateText">Выключен</span>
+          </div>
           <button class="btn ghost small" id="vpnCheck">Проверить IP</button>
           <button class="btn ghost small" id="vpnClear">Удалить ссылку</button>
         </div>
@@ -312,23 +335,33 @@
 
   function updateTunnelStatus(info) {
     const el = $('vpnStatus');
+    const text = $('vpnStateText');
+    let state = 'off';
+    let label = '—';
     if (!info) {
-      el.textContent = '—';
-      el.style.color = '';
-      return;
-    }
-    if (info.error) {
-      el.textContent = 'Ошибка: ' + info.error;
-      el.style.color = 'var(--err)';
+      label = '—';
+    } else if (info.error) {
+      state = 'err';
+      label = 'Ошибка: ' + info.error;
     } else if (info.enabled && info.running) {
-      el.textContent = 'Туннель запущен';
-      el.style.color = 'var(--ok)';
+      state = 'on';
+      label = 'Туннель запущен';
     } else if (info.enabled) {
-      el.textContent = 'Включён, но туннель не запущен';
-      el.style.color = 'var(--warn)';
+      state = 'warn';
+      label = 'Туннель не запущен';
     } else {
-      el.textContent = 'Выключен';
-      el.style.color = '';
+      label = 'Выключен';
+    }
+    el.dataset.state = state;
+    el.title = label;
+    if (text.textContent !== label) {
+      text.textContent = label;
+      if (text.animate) {
+        text.animate(
+          [{ opacity: 0.35, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }],
+          { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' }
+        );
+      }
     }
   }
 
