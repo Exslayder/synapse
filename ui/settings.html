@@ -117,10 +117,6 @@
     <div>
       <div class="title">Настройки</div>
     </div>
-    <div class="tabs">
-      <button class="tab active" data-pane="general">Общие</button>
-      <button class="tab" data-pane="sites">Сайты</button>
-    </div>
     <div class="spacer"></div>
   </header>
 
@@ -254,14 +250,6 @@
 
     </div>
 
-    <div id="pane-sites" hidden>
-      <div class="group">
-        <h3>Сайты</h3>
-        <div class="box" id="sitesBox"></div>
-      </div>
-      <button class="btn ghost" id="addSite" style="margin-bottom:18px">Добавить сайт</button>
-    </div>
-
   </div>
 
   <footer>
@@ -301,7 +289,6 @@
   const isOn = id => $(id).classList.contains('on');
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  let draftSites = [];
   let tunnelInfo = null;
   let connectionMode = 'doh';
 
@@ -356,48 +343,8 @@
     $('fallback').style.pointerEvents = on ? 'none' : '';
   }
 
-  function makeSiteId(url, name) {
-    let base = '';
-    try { base = new URL(url).hostname.replace(/^www\./, '').split('.')[0]; } catch (e) { /* ignore */ }
-    base = (base || name || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
-    let id = base;
-    let n = 2;
-    while (draftSites.some(s => s.id === id)) { id = base + '-' + n++; }
-    return id;
-  }
-
-  function renderSites() {
-    const box = $('sitesBox');
-    if (!draftSites.length) {
-      box.innerHTML = '<div class="row"><div class="hint">Список пуст. Добавьте сайт.</div></div>';
-      return;
-    }
-    box.innerHTML = draftSites.map((s, i) => `
-      <div class="row site-row" data-i="${i}">
-        <div class="field" style="flex:0 0 170px"><input class="site-name" value="${esc(s.name)}" placeholder="Название (обязательно)"></div>
-        <div class="field" style="flex:1 1 240px"><input class="site-url" value="${esc(s.url)}" placeholder="https://example.com"></div>
-        <button class="del" data-del="${i}" title="Удалить сайт">✕</button>
-      </div>`).join('');
-  }
-
-  function validateSites() {
-    let ok = true;
-    document.querySelectorAll('.site-row').forEach(row => {
-      const nameEl = row.querySelector('.site-name');
-      const urlEl = row.querySelector('.site-url');
-      const nameOk = !!nameEl.value.trim();
-      const urlOk = /^https?:\/\/[^\s]+/i.test(urlEl.value.trim());
-      nameEl.closest('.field').classList.toggle('invalid', !nameOk);
-      urlEl.closest('.field').classList.toggle('invalid', !urlOk);
-      if (!nameOk || !urlOk) ok = false;
-    });
-    return ok;
-  }
-
   function fill(cfg, base, tunnel) {
     tunnelInfo = tunnel || {};
-    draftSites = JSON.parse(JSON.stringify(cfg.sites || []));
-    renderSites();
     $('dohUrl').value = cfg.doh?.url || '';
     $('bootstrap').value = (cfg.doh?.bootstrap_ips || []).join(', ');
     $('proxyPort').value = cfg.proxy_port;
@@ -420,6 +367,14 @@
     updateVpnUi();
   }
 
+  function toast(msg, kind) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (kind ? ' ' + kind : '');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { t.className = 'toast'; }, 2200);
+  }
+
   function collect() {
     const cfg = JSON.parse(JSON.stringify(state.config));
     cfg.doh = cfg.doh || {};
@@ -439,57 +394,7 @@
     cfg.window_topmost = isOn('topmost');
     cfg.close_browsers_on_exit = isOn('closeBrowsers');
     cfg.auto_check_updates = isOn('autoUpdates');
-    cfg.sites = draftSites
-      .map(s => ({
-        ...s,
-        name: String(s.name || '').trim() || 'Сайт',
-        url: String(s.url || '').trim()
-      }))
-      .filter(s => /^https?:\/\//i.test(s.url) && s.name);
     return cfg;
-  }
-
-  function bindSitesEditor() {
-    document.querySelectorAll('.tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
-        $('pane-general').hidden = tab.dataset.pane !== 'general';
-        $('pane-sites').hidden = tab.dataset.pane !== 'sites';
-      });
-    });
-
-    $('sitesBox').addEventListener('input', (e) => {
-      const row = e.target.closest('.site-row');
-      if (!row) return;
-      const field = e.target.closest('.field');
-      if (field) field.classList.remove('invalid');
-      const i = Number(row.dataset.i);
-      if (!draftSites[i]) return;
-      if (e.target.classList.contains('site-name')) draftSites[i].name = e.target.value;
-      if (e.target.classList.contains('site-url')) draftSites[i].url = e.target.value;
-    });
-
-    $('sitesBox').addEventListener('click', (e) => {
-      const del = e.target.closest('[data-del]');
-      if (!del) return;
-      draftSites.splice(Number(del.dataset.del), 1);
-      renderSites();
-    });
-
-    $('addSite').addEventListener('click', () => {
-      draftSites.push({
-        id: makeSiteId('', 'site'),
-        name: '',
-        url: '',
-        pinned: false,
-        enabled: true,
-        direct: false
-      });
-      renderSites();
-      const rows = $('sitesBox').querySelectorAll('.site-row');
-      const last = rows[rows.length - 1];
-      if (last) last.querySelector('.site-name').focus();
-    });
   }
 
   function toast(msg, kind) {
@@ -523,7 +428,6 @@
       }, '', { enabled: false, configured: false, running: false, socks_port: 10808, error: '' });
     }
 
-    bindSitesEditor();
     document.querySelectorAll('#modeSwitch button').forEach(button => {
       button.addEventListener('click', () => setMode(button.dataset.mode, true));
     });
@@ -563,10 +467,6 @@
     $('save').addEventListener('click', async () => {
       if (!T) { toast('Демо-режим: сохранение недоступно', ''); return; }
       try {
-        if (!validateSites()) {
-          toast('Заполните выделенные поля', 'err');
-          return;
-        }
         const payload = collect();
         const link = $('vpnLink').value.trim();
         if (payload.tunnel.enabled && !link && !tunnelInfo?.configured) {
@@ -575,14 +475,6 @@
         }
         if (link && !/^vless:\/\//i.test(link)) {
           toast('Ссылка должна начинаться с vless://', 'err');
-          return;
-        }
-        if (payload.sites.length !== draftSites.length) {
-          toast('Проверьте адреса: нужен http(s):// и непустое название', 'err');
-          return;
-        }
-        if (!payload.sites.length) {
-          toast('Должен остаться хотя бы один сайт', 'err');
           return;
         }
         const args = { config: payload };
