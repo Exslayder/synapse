@@ -43,16 +43,19 @@ jobs:
       - name: Collect release files
         shell: pwsh
         run: |
+          $root = $PWD
           New-Item -ItemType Directory -Force dist-out | Out-Null
-          Copy-Item src-tauri/target/release/synapse.exe dist-out/Synapse.exe
-          Copy-Item src-tauri/target/release/xray.exe dist-out/xray.exe
-          Copy-Item src-tauri/resources/xray-LICENSE.txt dist-out/xray-LICENSE.txt
+          New-Item -ItemType Directory -Force portable-stage | Out-Null
+          Copy-Item src-tauri/target/release/synapse.exe portable-stage/Synapse.exe
+          Copy-Item src-tauri/target/release/xray.exe portable-stage/xray.exe
+          Copy-Item src-tauri/resources/xray-LICENSE.txt portable-stage/xray-LICENSE.txt
+          Copy-Item docs/PORTABLE-README.txt portable-stage/README-PORTABLE.txt
+          Push-Location portable-stage
+          Compress-Archive -Path Synapse.exe,xray.exe,README-PORTABLE.txt,xray-LICENSE.txt -DestinationPath (Join-Path $root 'dist-out\Synapse_portable.zip') -Force
+          Pop-Location
+          Remove-Item portable-stage -Recurse -Force
           Copy-Item src-tauri/target/release/bundle/nsis/*.exe dist-out/
           Copy-Item src-tauri/target/release/bundle/msi/*.msi dist-out/
-          Copy-Item docs/PORTABLE-README.txt dist-out/README-PORTABLE.txt
-          Push-Location dist-out
-          Compress-Archive -Path Synapse.exe,xray.exe,README-PORTABLE.txt,xray-LICENSE.txt -DestinationPath Synapse_portable.zip -Force
-          Pop-Location
           Get-ChildItem dist-out
 
       - name: Build release notes
