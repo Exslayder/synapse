@@ -64,6 +64,19 @@
   .sec-head .line{height:1px;flex:1;background:linear-gradient(90deg,var(--line),transparent)}
   .sec-head .note{font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sec-head .count{font-size:11px;color:var(--faint)}
+  .edit-bar{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .edit-bar[hidden]{display:none}
+  .edit-bar .spacer{flex:1}
+  .card.editing-card .body{flex:1;min-width:0}
+  .edit-fields{display:flex;flex-direction:column;gap:7px;flex:1;min-width:0}
+  .edit-fields input{width:100%;background:var(--bg-2);border:1px solid var(--line);border-radius:9px;
+    color:var(--text);font:inherit;font-size:13px;padding:7px 10px;outline:none;transition:.15s}
+  .edit-fields input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(76,141,255,.14)}
+  .edit-fields input.invalid{border-color:var(--err);box-shadow:0 0 0 3px rgba(239,95,95,.15)}
+  .delete-btn{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);background:transparent;
+    color:var(--faint);cursor:pointer;font-size:17px;line-height:1;flex:0 0 auto;transition:.15s}
+  .delete-btn:hover{color:var(--err);border-color:rgba(239,95,95,.45)}
+  .card.editing-card .actions{display:none}
 
   .sites{flex:1 1 auto;min-height:0;display:grid;gap:12px;align-content:start;
     grid-template-columns:1fr;overflow:auto;scrollbar-width:none;padding:6px 2px 6px 0}
@@ -224,7 +237,14 @@
   </section>
 
   <div class="sec-head"><h2>Сайты</h2><span class="note" title="У каждого сайта отдельный профиль браузера: куки и кеш не пересекаются">у каждого свой профиль</span><div class="line"></div>
-    <button class="mini-btn" id="editList" title="Показать ручки для перемещения">Изменить список</button>
+    <button class="mini-btn" id="editList" title="Редактировать названия, адреса и состав списка">Изменить</button>
+  </div>
+
+  <div class="edit-bar" id="editBar" hidden>
+    <button class="mini-btn" id="addSite">Добавить сайт</button>
+    <div class="spacer"></div>
+    <button class="mini-btn" id="cancelEdit">Отмена</button>
+    <button class="mini-btn active" id="saveEdit">Сохранить</button>
   </div>
 
   <div class="sites" id="sites"></div>
@@ -299,25 +319,131 @@
   }
 
   let lastSig = '';
+  let editing = false;
+  let draftSites = [];
+  let removedSiteIds = new Set();
 
-  function render(force = false) {
+  function makeSiteId(url, name) {
+    let base = '';
+    try { base = new URL(url).hostname.replace(/^www\./, '').split('.')[0]; } catch (e) { /* ignore */ }
+    base = (base || name || 'site').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
+    let id = base;
+    let n = 2;
+    while (draftSites.some(s => s.id === id) || removedSiteIds.has(id)) { id = base + '-' + n++; }
+    return id;
+  }
+
+  function cardEdit(site) {
+    return `<div class="card editing-card" data-id="${esc(site.id)}" style="--tint:${TINTS[site.id] || 'rgba(76,141,255,.3)'}">
+      <div class="drag-handle" data-handle title="Перетащите, чтобы изменить порядок">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+      </div>
+      <div class="tile">${LOGOS[site.id] || LOGOS.gemini}</div>
+      <div class="edit-fields">
+        <input class="edit-name" data-field="name" value="${esc(site.name)}" placeholder="Название">
+        <input class="edit-url" data-field="url" value="${esc(site.url)}" placeholder="https://example.com">
+      </div>
+      <button class="delete-btn" data-delete="${esc(site.id)}" title="Удалить сайт">×</button>
+    </div>`;
+  }
+
+  function renderEditSites() {
+    $('sites').innerHTML = draftSites.map(cardEdit).join('');
+    updateStats();
+  }
+
+  function syncDraftOrder() {
+    const ids = [...$('sites').children].map(card => card.dataset.id).filter(Boolean);
+    const byId = new Map(draftSites.map(site => [site.id, site]));
+    draftSites = ids.map(id => byId.get(id)).filter(Boolean);
+  }
+
+  function validateDraft() {
+    let ok = true;
+    const cards = [...$('sites').children];
+    draftSites.forEach(site => {
+      site.name = String(site.name || '').trim();
+      site.url = String(site.url || '').trim();
+      const card = cards.find(item => item.dataset.id === site.id);
+      if (!card) return;
+      const nameEl = card.querySelector('.edit-name');
+      const urlEl = card.querySelector('.edit-url');
+      const nameOk = !!site.name;
+      const urlOk = /^https?:\/\/[^\s]+/i.test(site.url);
+      nameEl.classList.toggle('invalid', !nameOk);
+      urlEl.classList.toggle('invalid', !urlOk);
+      if (!nameOk || !urlOk) ok = false;
+    });
+    return ok;
+  }
+
+  async function saveDraft() {
+    if (!T) { toast('Демо-режим: редактирование недоступно', 'err'); return; }
+    syncDraftOrder();
+    if (!draftSites.length) { toast('Должен остаться хотя бы один сайт', 'err'); return; }
+    if (!validateDraft()) { toast('Проверьте названия и адреса сайтов', 'err'); return; }
+    const payload = JSON.parse(JSON.stringify(state.config));
+    payload.sites = draftSites.map(site => ({
+      ...site,
+      name: site.name.trim(),
+      url: site.url.trim()
+    }));
+    try {
+      state = await T.core.invoke('save_config', { config: payload });
+      exitEdit();
+      toast('Список сайтов сохранён', 'ok');
+      runChecks();
+    } catch (err) {
+      toast(String(err), 'err');
+    }
+  }
+
+  function enterEdit() {
+    if (!T) { toast('Демо-режим: редактирование недоступно', ''); return; }
+    draftSites = JSON.parse(JSON.stringify(state.config.sites || []));
+    removedSiteIds = new Set();
+    editing = true;
+    document.body.classList.add('editing');
+    $('editList').hidden = true;
+    $('editBar').hidden = false;
+    lastSig = '';
+    renderEditSites();
+    const first = $('sites').querySelector('.edit-name');
+    if (first) first.focus();
+  }
+
+  function exitEdit() {
+    editing = false;
+    draftSites = [];
+    document.body.classList.remove('editing');
+    $('editList').hidden = false;
+    $('editBar').hidden = true;
+    lastSig = '';
+    render(true);
+  }
+
+  function addDraftSite() {
+    const id = makeSiteId('', '');
+    draftSites.push({
+      id,
+      name: '',
+      url: '',
+      pinned: false,
+      enabled: true,
+      direct: false,
+      window: ''
+    });
+    renderEditSites();
+    const rows = $('sites').children;
+    const last = rows[rows.length - 1];
+    if (last) last.querySelector('.edit-name').focus();
+  }
+
+  function updateStats() {
     const cfg = state.config;
     const running = state.running || [];
-    const sites = cfg.sites || [];
+    const sites = editing ? draftSites : (cfg.sites || []);
     const proxy = state.proxy || { port: cfg.proxy_port, running: false };
-    const sig = JSON.stringify({
-      sites,
-      running,
-      health: state.health || {},
-      browser: state.browser,
-      proxy,
-      doh: (cfg.doh && cfg.doh.url) || '',
-      tunnel: cfg.tunnel || null
-    });
-    if (!force && sig === lastSig) return;
-    lastSig = sig;
-
-    $('sites').innerHTML = sites.map(s => card(s, running)).join('');
     $('openValue').textContent = running.length + ' из ' + sites.length;
     $('openDot').className = 'dot ' + (running.length ? '' : 'idle');
     $('browserValue').textContent = state.browser && state.browser.found ? state.browser.name : 'Не найден';
@@ -335,6 +461,26 @@
           ? 'Прокси работает, трафик сайтов идёт через VPN'
           : 'Прокси работает, DNS-запросы идут через ' + (doh || 'системный DNS'))
       : 'Прокси не запустился';
+  }
+
+  function render(force = false) {
+    const cfg = state.config;
+    const running = state.running || [];
+    const sites = editing ? draftSites : (cfg.sites || []);
+    const proxy = state.proxy || { port: cfg.proxy_port, running: false };
+    const sig = JSON.stringify({
+      sites,
+      running,
+      health: state.health || {},
+      browser: state.browser,
+      proxy,
+      doh: (cfg.doh && cfg.doh.url) || '',
+      tunnel: cfg.tunnel || null
+    });
+    if (!force && sig === lastSig) { updateStats(); return; }
+    lastSig = sig;
+    if (!editing) $('sites').innerHTML = sites.map(s => card(s, running)).join('');
+    updateStats();
   }
 
   function bindSiteActions() {
@@ -407,6 +553,7 @@
       document.body.classList.remove('dragging-active');
       card = null;
       if (!T) return;
+      if (editing) { syncDraftOrder(); return; }
       const ids = [...container.children].map(c => c.dataset.id).filter(Boolean);
       try {
         await T.core.invoke('reorder_sites', { ids });
@@ -556,16 +703,34 @@
     if (!state) state = DEMO;
     bindSiteActions();
     enableDrag($('sites'));
-    $('editList').addEventListener('click', async () => {
-      const editing = document.body.classList.toggle('editing');
-      $('editList').textContent = editing ? 'Готово' : 'Изменить список';
-      $('editList').classList.toggle('active', editing);
-      if (!editing && T) {
-        try {
-          await T.core.invoke('apply_pin_order');
-          await refresh(true);
-        } catch (err) { /* приоритет не критичен */ }
+    $('editList').addEventListener('click', enterEdit);
+    $('addSite').addEventListener('click', addDraftSite);
+    $('cancelEdit').addEventListener('click', exitEdit);
+    $('saveEdit').addEventListener('click', saveDraft);
+    $('sites').addEventListener('input', (event) => {
+      if (!editing) return;
+      const input = event.target.closest('.edit-name, .edit-url');
+      const card = input && input.closest('.editing-card');
+      if (!input || !card) return;
+      const site = draftSites.find(item => item.id === card.dataset.id);
+      if (!site) return;
+      if (input.classList.contains('edit-name')) site.name = input.value;
+      if (input.classList.contains('edit-url')) site.url = input.value;
+      input.classList.remove('invalid');
+    });
+    $('sites').addEventListener('click', (event) => {
+      const remove = event.target.closest('[data-delete]');
+      if (!remove || !editing) return;
+      if (draftSites.length <= 1) {
+        toast('Должен остаться хотя бы один сайт', 'err');
+        return;
       }
+      const site = draftSites.find(item => item.id === remove.dataset.delete);
+      if (!site) return;
+      if (!confirm(`Удалить «${site.name || 'сайт'}»? Профиль браузера останется на диске.`)) return;
+      removedSiteIds.add(site.id);
+      draftSites = draftSites.filter(item => item.id !== site.id);
+      renderEditSites();
     });
     render();
     if (T) setTimeout(checkUpdate, 900);
