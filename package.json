@@ -1,8 +1,9 @@
 {
-  "name": "synapse-upgrade",
+  "name": "synapse",
   "private": true,
-  "version": "2.0.1",
-  "description": "Synapse redesign prototype on Tauri (Rust + WebView2)",
+  "version": "2.0.5",
+  "description": "Windows desktop hub for Gemini, ChatGPT, Claude and Grok with DNS-over-HTTPS and VLESS/Reality VPN",
+  "license": "MIT",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
