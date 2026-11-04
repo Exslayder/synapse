@@ -3214,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "synapse"
-version = "2.0.4"
+version = "2.0.5"
 dependencies = [
  "chrono",
  "reqwest 0.12.28",
@@ -3223,6 +3223,7 @@ dependencies = [
  "sha2",
  "tauri",
  "tauri-build",
+ "url",
  "windows",
 ]
 

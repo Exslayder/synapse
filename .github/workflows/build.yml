@@ -30,6 +30,10 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Fetch Xray core
+        shell: pwsh
+        run: ./.github/scripts/fetch-xray.ps1
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -40,5 +44,8 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: synapse-portable
-          path: src-tauri/target/release/synapse.exe
+          path: |
+            src-tauri/target/release/synapse.exe
+            src-tauri/target/release/xray.exe
+            src-tauri/resources/xray-LICENSE.txt
           if-no-files-found: error

@@ -8,6 +8,7 @@ Synapse/
 profiles/
 logs/
 config.json
+tunnel.dat
 *.log
 app.lock
 
@@ -21,3 +22,9 @@ desktop.ini
 # Local tooling
 *.bak
 *.tmp
+
+# VPN integration: local document with real keys, never commit
+docs/vpn-integration.md
+
+# Xray sidecar is downloaded by .github/scripts/fetch-xray.ps1
+src-tauri/binaries/

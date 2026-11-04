@@ -2,18 +2,22 @@
 
 mod doh;
 mod proxy;
+mod tunnel;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, TcpStream};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::time::Duration;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::path::BaseDirectory;
 
 use doh::DohResolver;
 
@@ -67,9 +71,26 @@ impl Default for Site {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
+struct TunnelConfig {
+    enabled: bool,
+    socks_port: u16,
+}
+
+impl Default for TunnelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            socks_port: 10808,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
 struct AppConfig {
     version: u32,
     doh: DohConfig,
+    tunnel: TunnelConfig,
     proxy_port: u16,
     allowed_ports: Vec<u16>,
     browser: String,
@@ -87,8 +108,9 @@ struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            version: 3,
+            version: 4,
             doh: DohConfig::default(),
+            tunnel: TunnelConfig::default(),
             proxy_port: 8877,
             allowed_ports: vec![80, 443],
             browser: "auto".into(),
@@ -139,6 +161,9 @@ struct Shared {
     health: Arc<Mutex<HashMap<String, SiteHealth>>>,
     running_cache: Arc<Mutex<Vec<String>>>,
     browser_cache: Arc<Mutex<Option<(String, String, BrowserInfo)>>>,
+    tunnel_route: Arc<Mutex<proxy::TunnelRoute>>,
+    tunnel_child: Arc<Mutex<Option<Child>>>,
+    tunnel_error: Arc<Mutex<String>>,
 }
 
 static STATE: OnceLock<Shared> = OnceLock::new();
@@ -192,13 +217,18 @@ fn config_path(base: &Path) -> PathBuf {
 }
 
 fn load_config(base: &Path) -> AppConfig {
-    match fs::read_to_string(config_path(base)) {
+    let mut cfg = match fs::read_to_string(config_path(base)) {
         Ok(text) => {
             let cleaned = text.trim_start_matches('\u{feff}');
-            serde_json::from_str(cleaned).unwrap_or_default()
+            serde_json::from_str::<AppConfig>(cleaned).unwrap_or_default()
         }
         Err(_) => AppConfig::default(),
+    };
+    if cfg.version < 4 {
+        cfg.version = 4;
+        cfg.tunnel = TunnelConfig::default();
     }
+    cfg
 }
 
 fn write_config(base: &Path, cfg: &AppConfig) -> Result<(), String> {
@@ -871,6 +901,7 @@ fn launch_site(
             .arg("--no-default-browser-check")
             .arg("--disable-quic")
             .arg("--disable-sync")
+            .arg("--disable-features=DnsOverHttps")
             .arg("--disable-background-mode")
             .arg("--no-service-autorun")
             .arg("--disable-background-networking")
@@ -1158,6 +1189,236 @@ fn apply_window_geometry(hwnd: windows::Win32::Foundation::HWND, w: u32, h: u32,
     }
 }
 
+// ---------------------------------------------------------------- tunnel
+
+fn find_xray(app: &AppHandle, base: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(path) = app.path().resolve("xray.exe", BaseDirectory::Resource) {
+        candidates.push(path);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("xray.exe"));
+            candidates.push(dir.join("xray-x86_64-pc-windows-msvc.exe"));
+            candidates.push(dir.join("resources").join("xray.exe"));
+        }
+    }
+    candidates.push(base.join("xray.exe"));
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(
+            cwd.join("src-tauri")
+                .join("binaries")
+                .join("xray-x86_64-pc-windows-msvc.exe"),
+        );
+        candidates.push(cwd.join("src-tauri").join("binaries").join("xray.exe"));
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn tunnel_config_dir(app: &AppHandle, base: &Path) -> PathBuf {
+    app.path()
+        .app_local_data_dir()
+        .unwrap_or_else(|_| base.to_path_buf())
+        .join("tunnel")
+}
+
+fn tunnel_is_running(state: &Shared) -> bool {
+    let mut guard = state.tunnel_child.lock().unwrap();
+    let alive = match guard.as_mut() {
+        Some(child) => matches!(child.try_wait(), Ok(None)),
+        None => false,
+    };
+    if !alive {
+        *guard = None;
+    }
+    alive
+}
+
+fn set_tunnel_failure(state: &Shared, message: &str) {
+    *state.tunnel_error.lock().unwrap() = message.to_string();
+    let mut route = state.tunnel_route.lock().unwrap();
+    route.enabled = true;
+    route.socks_port = 0;
+    log_line(&state.base, "warn", &format!("VPN: {message}"));
+}
+
+fn stop_tunnel(state: &Shared) {
+    if let Some(mut child) = state.tunnel_child.lock().unwrap().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let mut route = state.tunnel_route.lock().unwrap();
+    route.socks_port = 0;
+}
+
+fn start_tunnel(app: &AppHandle, state: &Shared) -> Result<(), String> {
+    stop_tunnel(state);
+    *state.tunnel_error.lock().unwrap() = String::new();
+
+    let link = tunnel::load_secret(&state.base)
+        .map_err(|err| {
+            set_tunnel_failure(state, "не удалось прочитать сохранённую ссылку");
+            err
+        })?
+        .ok_or_else(|| {
+            set_tunnel_failure(state, "ссылка не сохранена");
+            "VPN-ссылка не сохранена".to_string()
+        })?;
+    let parsed = tunnel::parse_link(&link).map_err(|err| {
+        set_tunnel_failure(state, "ссылка не прошла проверку");
+        err
+    })?;
+
+    let socks_port = {
+        let port = state.config.lock().unwrap().tunnel.socks_port;
+        if port == 0 { 10808 } else { port }
+    };
+    let port_addr = SocketAddr::from(([127, 0, 0, 1], socks_port));
+    if TcpStream::connect_timeout(&port_addr, Duration::from_millis(250)).is_ok() {
+        let message = format!("порт {socks_port} уже занят");
+        set_tunnel_failure(state, &message);
+        return Err(message);
+    }
+
+    let xray = find_xray(app, &state.base).ok_or_else(|| {
+        set_tunnel_failure(state, "не найден xray.exe");
+        "Не найден xray.exe".to_string()
+    })?;
+    let dir = tunnel_config_dir(app, &state.base);
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let config_path = dir.join("xray.json");
+    let config = tunnel::xray_config(&parsed, socks_port);
+    fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&config).map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| {
+        set_tunnel_failure(state, "не удалось подготовить конфигурацию");
+        err.to_string()
+    })?;
+
+    let mut command = Command::new(&xray);
+    command
+        .arg("run")
+        .arg("-c")
+        .arg(&config_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(0x08000000);
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            let _ = fs::remove_file(&config_path);
+            set_tunnel_failure(state, "не удалось запустить xray");
+            return Err(format!("Запуск xray: {err}"));
+        }
+    };
+    *state.tunnel_child.lock().unwrap() = Some(child);
+
+    let mut ready = false;
+    for _ in 0..50 {
+        let alive = {
+            let mut guard = state.tunnel_child.lock().unwrap();
+            match guard.as_mut() {
+                Some(child) => matches!(child.try_wait(), Ok(None)),
+                None => false,
+            }
+        };
+        if !alive {
+            break;
+        }
+        if TcpStream::connect_timeout(&port_addr, Duration::from_millis(250)).is_ok() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = fs::remove_file(&config_path);
+
+    if !ready {
+        stop_tunnel(state);
+        set_tunnel_failure(state, "xray не поднялся за 5 секунд");
+        return Err("VPN не запустился".into());
+    }
+
+    {
+        let mut route = state.tunnel_route.lock().unwrap();
+        route.enabled = true;
+        route.socks_port = socks_port;
+    }
+    *state.tunnel_error.lock().unwrap() = String::new();
+    log_line(
+        &state.base,
+        "info",
+        &format!("VPN: туннель запущен, SOCKS5 127.0.0.1:{socks_port}"),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn set_tunnel_link(state: State<Shared>, link: String) -> Result<(), String> {
+    tunnel::save_secret(&state.base, &link)?;
+    log_line(&state.base, "info", "VPN: ссылка сохранена");
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_tunnel_link(state: State<Shared>) -> Result<StateResponse, String> {
+    tunnel::clear_secret(&state.base)?;
+    stop_tunnel(&state);
+    {
+        let mut route = state.tunnel_route.lock().unwrap();
+        route.enabled = false;
+    }
+    {
+        let mut cfg = state.config.lock().unwrap();
+        cfg.tunnel.enabled = false;
+        write_config(&state.base, &cfg)?;
+    }
+    log_line(&state.base, "info", "VPN: ссылка удалена");
+    Ok(get_state(state))
+}
+
+#[tauri::command]
+fn check_tunnel(app: AppHandle, state: State<Shared>) -> Result<String, String> {
+    let enabled = state.config.lock().unwrap().tunnel.enabled;
+    if !enabled {
+        return Err("Сначала включите VPN".into());
+    }
+    if !tunnel_is_running(&state) {
+        start_tunnel(&app, &state)?;
+    }
+    let port = state.tunnel_route.lock().unwrap().socks_port;
+    if port == 0 {
+        return Err("VPN не запущен".into());
+    }
+    let proxy = reqwest::Proxy::all(format!("socks5h://127.0.0.1:{port}"))
+        .map_err(|e| e.to_string())?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .proxy(proxy)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let text = client
+        .get("https://ifconfig.me/ip")
+        .send()
+        .map_err(|e| format!("Проверка VPN: {e}"))?
+        .text()
+        .map_err(|e| format!("Проверка VPN: {e}"))?
+        .trim()
+        .to_string();
+    if text.is_empty()
+        || text.len() > 64
+        || !text
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.' || c == ':')
+    {
+        return Err("Не удалось определить IP через VPN".into());
+    }
+    Ok(text)
+}
+
 // ---------------------------------------------------------------- commands
 
 #[derive(Serialize, Clone)]
@@ -1173,6 +1434,15 @@ struct ProxyState {
     running: bool,
 }
 
+#[derive(Serialize, Clone)]
+struct TunnelInfo {
+    enabled: bool,
+    configured: bool,
+    running: bool,
+    socks_port: u16,
+    error: String,
+}
+
 #[derive(Serialize)]
 struct StateResponse {
     config: AppConfig,
@@ -1182,6 +1452,7 @@ struct StateResponse {
     log_path: String,
     proxy: ProxyState,
     health: HashMap<String, SiteHealth>,
+    tunnel: TunnelInfo,
 }
 
 // ---------------------------------------------------------------- updates
@@ -1647,6 +1918,11 @@ fn get_state(state: State<Shared>) -> StateResponse {
     }
     let proxy_port = *state.proxy_port.lock().unwrap();
     let health = state.health.lock().unwrap().clone();
+    let tunnel_running = tunnel_is_running(&state);
+    let tunnel_configured = tunnel::secret_exists(&state.base);
+    let tunnel_error = state.tunnel_error.lock().unwrap().clone();
+    let tunnel_enabled = cfg.tunnel.enabled;
+    let tunnel_socks_port = cfg.tunnel.socks_port;
     StateResponse {
         browser: browser_info_cached(&state, &cfg),
         base: state.base.to_string_lossy().into(),
@@ -1662,6 +1938,13 @@ fn get_state(state: State<Shared>) -> StateResponse {
             running: proxy_port != 0,
         },
         health,
+        tunnel: TunnelInfo {
+            enabled: tunnel_enabled,
+            configured: tunnel_configured,
+            running: tunnel_running,
+            socks_port: tunnel_socks_port,
+            error: tunnel_error,
+        },
         config: cfg,
     }
 }
@@ -1671,16 +1954,32 @@ fn save_config(
     state: State<Shared>,
     config: AppConfig,
     app: AppHandle,
+    tunnel_link: Option<String>,
 ) -> Result<StateResponse, String> {
     let mut cfg = config;
     cfg.proxy_port = cfg.proxy_port.clamp(1024, 65535);
     cfg.browser_width = cfg.browser_width.clamp(640, 7680);
     cfg.browser_height = cfg.browser_height.clamp(480, 4320);
+    cfg.tunnel.socks_port = if cfg.tunnel.socks_port == 0 {
+        10808
+    } else {
+        cfg.tunnel.socks_port.clamp(1024, 65535)
+    };
     if cfg.doh.timeout <= 0.0 {
         cfg.doh.timeout = 8.0;
     }
     if cfg.sites.is_empty() {
         cfg.sites = default_sites();
+    }
+
+    if let Some(link) = tunnel_link {
+        let link = link.trim().to_string();
+        if !link.is_empty() {
+            tunnel::save_secret(&state.base, &link)?;
+        }
+    }
+    if cfg.tunnel.enabled && !tunnel::secret_exists(&state.base) {
+        return Err("Сначала сохраните VPN-ссылку".into());
     }
 
     if let Some(window) = app.get_webview_window("main") {
@@ -1709,9 +2008,22 @@ fn save_config(
             ),
         );
     }
-    log_line(&state.base, "info", "настройки сохранены");
+    let tunnel_enabled = cfg.tunnel.enabled;
     *state.config.lock().unwrap() = cfg;
     *state.browser_cache.lock().unwrap() = None;
+    {
+        let mut route = state.tunnel_route.lock().unwrap();
+        route.enabled = tunnel_enabled;
+        route.socks_port = 0;
+    }
+    if tunnel_enabled {
+        if let Err(err) = start_tunnel(&app, &state) {
+            log_line(&state.base, "warn", &format!("VPN: {err}"));
+        }
+    } else {
+        stop_tunnel(&state);
+    }
+    log_line(&state.base, "info", "настройки сохранены");
     Ok(get_state(state))
 }
 
@@ -2296,6 +2608,10 @@ fn main() {
             ));
 
             let direct_hosts = Arc::new(Mutex::new(direct_hosts_from_sites(&cfg.sites)));
+            let tunnel_route = Arc::new(Mutex::new(proxy::TunnelRoute {
+                enabled: cfg.tunnel.enabled,
+                socks_port: 0,
+            }));
             let proxy_log_base = base.clone();
             let logger: proxy::LogFn =
                 Arc::new(move |msg: String| log_line(&proxy_log_base, "info", &msg));
@@ -2304,6 +2620,7 @@ fn main() {
                 resolver.clone(),
                 cfg.allowed_ports.clone(),
                 direct_hosts.clone(),
+                tunnel_route.clone(),
                 logger,
             ) {
                 Ok(port) => {
@@ -2340,9 +2657,20 @@ fn main() {
                 health: Arc::new(Mutex::new(HashMap::new())),
                 running_cache: Arc::new(Mutex::new(Vec::new())),
                 browser_cache: Arc::new(Mutex::new(None)),
+                tunnel_route,
+                tunnel_child: Arc::new(Mutex::new(None)),
+                tunnel_error: Arc::new(Mutex::new(String::new())),
             };
             let _ = STATE.set(shared.clone());
             app.manage(shared.clone());
+
+            if shared.config.lock().unwrap().tunnel.enabled {
+                let app_handle = app.handle().clone();
+                let starter = shared.clone();
+                std::thread::spawn(move || {
+                    let _ = start_tunnel(&app_handle, &starter);
+                });
+            }
 
             {
                 let cleanup = shared.clone();
@@ -2456,6 +2784,7 @@ fn main() {
                             let close = cfg.close_browsers_on_exit;
                             drop(cfg);
                             log_line(&state.base, "info", "закрытие: конфиг сохранён");
+                            stop_tunnel(&state);
                             if close {
                                 save_site_windows(&state, false);
                             }
@@ -2475,6 +2804,9 @@ fn main() {
             check_update,
             open_release,
             apply_update,
+            set_tunnel_link,
+            clear_tunnel_link,
+            check_tunnel,
             open_all,
             reorder_sites,
             apply_pin_order,
