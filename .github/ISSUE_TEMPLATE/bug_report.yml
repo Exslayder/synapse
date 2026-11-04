@@ -1,0 +1,55 @@
+name: Сообщение об ошибке
+description: Проблема в работе Synapse
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Не прикладывайте реальные VPN-ссылки, UUID, `pbk`, `config.json`,
+        `profiles/`, `tunnel.dat` и журналы без личных данных.
+        Уязвимости не публикуйте здесь — см. SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Версия Synapse
+      description: Например, 2.0.5
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Режим подключения
+      options:
+        - DoH
+        - VPN
+        - Системный DNS
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows
+      description: Версия и разрядность, например Windows 11 24H2 x64
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Что вы сделали и что произошло
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Журнал
+      description: Фрагмент `logs/synapse.log` без персональных данных и секретов
+      render: text
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Проверка
+      options:
+        - label: Я удалил из сообщения реальные VPN-ключи и личные данные
+          required: true

@@ -4,6 +4,10 @@ Windows-приложение, которое держит Gemini, ChatGPT, Claud
 
 Написан на Tauri 2: бэкенд на Rust, интерфейс на HTML/CSS, рендер через WebView2.
 
+[![Release](https://img.shields.io/github/v/release/Exslayder/synapse?label=release)](https://github.com/Exslayder/synapse/releases/latest)
+[![License](https://img.shields.io/github/license/Exslayder/synapse)](LICENSE)
+[![Windows](https://img.shields.io/badge/platform-Windows-0078d4)](https://github.com/Exslayder/synapse/releases/latest)
+
 ![Интерфейс Synapse](docs/screenshot-main.png)
 
 ## Возможности
@@ -87,6 +91,10 @@ npm run tauri build
 ## Приватность
 
 Приложение не отправляет телеметрию. Сеть используется для окон браузеров, DoH-сервера, VPN-туннеля (если он включён), одной проверки версии на GitHub при запуске и загрузки обновления по кнопке «Обновить». VPN-сервер видит метаданные туннелируемого трафика, но не содержимое TLS. Список сайтов, профили и журналы хранятся локально.
+
+## Участие
+
+Изменения принимаются через pull request: `main` защищён, прямые пуши запрещены. Правила сборки, тестов и работы с секретами описаны в [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Лицензия
 
