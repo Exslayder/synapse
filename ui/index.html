@@ -60,7 +60,7 @@
   .dot.idle{background:var(--faint);box-shadow:none}
 
   .sec-head{display:flex;align-items:center;gap:10px;flex:0 0 auto}
-  .sec-head h2{margin:0;font-size:12px;letter-spacing:.9px;text-transform:uppercase;color:var(--muted);font-weight:650}
+  .sec-head h2{margin:0;font-size:15px;letter-spacing:.2px;color:var(--text);font-weight:700}
   .sec-head .line{height:1px;flex:1;background:linear-gradient(90deg,var(--line),transparent)}
   .sec-head .note{font-size:11px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .sec-head .count{font-size:11px;color:var(--faint)}
@@ -69,6 +69,7 @@
     max-height:0;margin-top:0;opacity:0;overflow:hidden;transform:translateY(-6px);pointer-events:none;
     transition:max-height .28s cubic-bezier(.2,.8,.2,1),margin-top .28s cubic-bezier(.2,.8,.2,1),opacity .2s ease,transform .25s ease}
   .edit-bar.open{max-height:80px;margin-top:10px;opacity:1;transform:none;pointer-events:auto}
+  .edit-bar.open.ready{overflow:visible}
   .edit-bar .spacer{flex:1;min-width:8px}
   .edit-toggle{display:inline-flex;align-items:center;gap:7px;border:1px solid rgba(76,141,255,.38);
     background:linear-gradient(180deg,rgba(76,141,255,.16),rgba(76,141,255,.06));
@@ -452,6 +453,9 @@
     $('editList').hidden = true;
     $('editBar').classList.add('open');
     $('editBar').setAttribute('aria-hidden', 'false');
+    setTimeout(() => {
+      if (editing) $('editBar').classList.add('ready');
+    }, 320);
     lastSig = '';
     renderEditSites();
     const first = $('sites').querySelector('.edit-name');
@@ -464,6 +468,7 @@
     document.body.classList.remove('editing');
     $('editList').hidden = false;
     $('editBar').classList.remove('open');
+    $('editBar').classList.remove('ready');
     $('editBar').setAttribute('aria-hidden', 'true');
     lastSig = '';
     render(true);
