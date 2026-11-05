@@ -339,7 +339,14 @@
 
   function card(site, running) {
     const isOpen = running.includes(site.id);
+    const vpn = !!(state.config && state.config.tunnel && state.config.tunnel.enabled);
     const host = site.url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    const route = vpn
+      ? (site.direct ? 'напрямую' : 'через VPN')
+      : (site.direct ? 'без DoH' : '');
+    const globeTitle = vpn
+      ? (site.direct ? 'Вернуть сайт в VPN' : 'Пустить сайт напрямую, мимо VPN')
+      : (site.direct ? 'Вернуть DoH для этого сайта' : 'Обходить DoH (системный DNS) для этого сайта');
     const health = (state.health || {})[site.id];
     const hs = health ? (health.ok ? 'ok' : 'bad') : 'unknown';
     const hsTitle = health
@@ -352,11 +359,11 @@
       <div class="tile">${LOGOS[site.id] || LOGOS.gemini}</div>
       <div class="body">
         <div class="name"><span class="hs ${hs}" title="${esc(hsTitle)}"></span>${esc(site.name)}</div>
-        <div class="host"><b>${esc(host)}</b>${site.direct ? ' · без DoH' : ''}${site.enabled ? '' : ' · выключен'}</div>
+        <div class="host"><b>${esc(host)}</b>${route ? ' · ' + route : ''}${site.enabled ? '' : ' · выключен'}</div>
       </div>
       <div class="actions">
         <button class="btn ${isOpen ? 'open' : ''}" data-open="${esc(site.id)}" ${site.enabled ? '' : 'disabled'}>Открыть</button>
-        <button class="globe-btn ${site.direct ? 'active' : ''}" data-direct="${esc(site.id)}" title="${site.direct ? 'Вернуть DoH для этого сайта' : 'Обходить DoH (системный DNS) для этого сайта'}">
+        <button class="globe-btn ${site.direct ? 'active' : ''}" data-direct="${esc(site.id)}" title="${globeTitle}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
             <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 2.5 15.3 0 18M12 3c-2.5 2.7-2.5 15.3 0 18"/>
           </svg>
@@ -553,7 +560,13 @@
         if (!T) { toast('Демо-режим: обход DoH недоступен'); return; }
         try {
           const direct = await T.core.invoke('toggle_direct', { id: directBtn.dataset.direct });
-          toast(direct ? 'Сайт идёт через системный DNS' : 'Сайт снова через DoH', 'ok');
+          const vpn = !!(state.config && state.config.tunnel && state.config.tunnel.enabled);
+          toast(
+            vpn
+              ? (direct ? 'Сайт идёт напрямую, мимо VPN' : 'Сайт снова через VPN')
+              : (direct ? 'Сайт идёт через системный DNS' : 'Сайт снова через DoH'),
+            'ok'
+          );
           await refresh();
           runChecks();
         } catch (e) { toast(String(e), 'err'); }
