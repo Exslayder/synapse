@@ -342,10 +342,10 @@
     const vpn = !!(state.config && state.config.tunnel && state.config.tunnel.enabled);
     const host = site.url.replace(/^https?:\/\//, '').replace(/\/$/, '');
     const route = vpn
-      ? (site.direct ? 'напрямую' : 'через VPN')
+      ? (site.direct ? 'без VPN' : '')
       : (site.direct ? 'без DoH' : '');
     const globeTitle = vpn
-      ? (site.direct ? 'Вернуть сайт в VPN' : 'Пустить сайт напрямую, мимо VPN')
+      ? (site.direct ? 'Вернуть сайт в VPN' : 'Пустить сайт без VPN')
       : (site.direct ? 'Вернуть DoH для этого сайта' : 'Обходить DoH (системный DNS) для этого сайта');
     const health = (state.health || {})[site.id];
     const hs = health ? (health.ok ? 'ok' : 'bad') : 'unknown';
@@ -563,7 +563,7 @@
           const vpn = !!(state.config && state.config.tunnel && state.config.tunnel.enabled);
           toast(
             vpn
-              ? (direct ? 'Сайт идёт напрямую, мимо VPN' : 'Сайт снова через VPN')
+              ? (direct ? 'Сайт идёт без VPN' : 'Сайт снова в VPN')
               : (direct ? 'Сайт идёт через системный DNS' : 'Сайт снова через DoH'),
             'ok'
           );
