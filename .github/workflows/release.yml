@@ -56,6 +56,8 @@ jobs:
           Remove-Item portable-stage -Recurse -Force
           Copy-Item src-tauri/target/release/bundle/nsis/*.exe dist-out/
           Copy-Item src-tauri/target/release/bundle/msi/*.msi dist-out/
+          # отдельный exe нужен портативным сборкам 2.0.5 и старше для самообновления
+          Copy-Item src-tauri/target/release/synapse.exe dist-out/synapse.exe
           Get-ChildItem dist-out
 
       - name: Build release notes
