@@ -653,7 +653,10 @@
   function showUpdate(info) {
     if (!info || !info.available) return;
     $('updateVersion').textContent = info.latest;
-    $('updateNote').textContent = `Установлена ${info.current}`;
+    const kindLabel = info.mode === 'portable'
+      ? 'портативная версия'
+      : (info.mode === 'msi' ? 'версия из MSI' : 'установленная версия');
+    $('updateNote').textContent = `Установлена ${info.current} · ${kindLabel}`;
     $('updateNotesLink').hidden = !info.url;
     $('updateNotesLink').onclick = (event) => {
       event.preventDefault();
@@ -663,7 +666,7 @@
     $('updateNow').textContent = canSelfUpdate ? 'Обновить' : 'Скачать';
     $('updateNow').onclick = canSelfUpdate
       ? () => startUpdate(info.mode)
-      : () => openRelease(info.url);
+      : () => openRelease(info.asset_url || info.url);
     $('updateHide').onclick = () => {
       $('update').hidden = true;
     };
@@ -679,7 +682,9 @@
     hide.disabled = true;
     link.style.pointerEvents = 'none';
     btn.textContent = 'Скачивание…';
-    $('updateNote').textContent = 'Скачивание и проверка обновления';
+    $('updateNote').textContent = mode === 'portable'
+      ? 'Скачивание портативной сборки'
+      : 'Скачивание установщика';
     try {
       const result = await T.core.invoke('apply_update');
       if (result && result.action === 'downloaded') {

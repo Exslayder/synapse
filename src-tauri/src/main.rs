@@ -1468,12 +1468,15 @@ struct UpdateInfo {
     latest: String,
     url: String,
     installer: String,
+    asset_url: String,
+    asset_name: String,
     mode: String,
     can_self_update: bool,
 }
 
 #[derive(Default, Clone)]
 struct ReleaseAsset {
+    name: String,
     url: String,
     sha256: String,
 }
@@ -1504,32 +1507,43 @@ impl InstallKind {
     }
 }
 
+fn dir_is_writable(dir: &Path) -> bool {
+    let probe = dir.join(".synapse-write-probe");
+    let ok = fs::write(&probe, b"x").is_ok();
+    if ok {
+        let _ = fs::remove_file(&probe);
+    }
+    ok
+}
+
+/// Portable builds live in a folder the user owns, so the exe directory is
+/// writable and there is no uninstaller next to it. NSIS keeps `uninstall.exe`
+/// in the install directory. Everything else (MSI, Program Files) is treated
+/// as a system install.
 fn install_kind(exe: &Path) -> InstallKind {
     if let Some(dir) = exe.parent() {
         if dir.join("uninstall.exe").is_file() {
             return InstallKind::Nsis;
         }
-    }
-    let lower = exe.to_string_lossy().to_ascii_lowercase();
-    let mut roots: Vec<String> = Vec::new();
-    for key in ["ProgramFiles", "ProgramFiles(x86)"] {
-        if let Ok(value) = std::env::var(key) {
-            let value = value.trim().to_ascii_lowercase();
-            if !value.is_empty() {
-                roots.push(format!("{value}\\"));
-            }
+        if dir_is_writable(dir) {
+            return InstallKind::Portable;
         }
     }
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        let local = local.trim().to_ascii_lowercase();
-        if !local.is_empty() {
-            roots.push(format!("{local}\\programs\\"));
-        }
-    }
-    if roots.iter().any(|root| lower.starts_with(root)) {
-        return InstallKind::Msi;
-    }
-    InstallKind::Portable
+    InstallKind::Msi
+}
+
+/// Portable builds get the zip, installed builds get their own installer.
+/// If the preferred asset is missing, fall back to the other one.
+fn pick_update_asset(kind: InstallKind, release: &LatestRelease) -> Option<ReleaseAsset> {
+    let candidates: [&ReleaseAsset; 2] = match kind {
+        InstallKind::Portable => [&release.archive, &release.portable],
+        InstallKind::Nsis => [&release.installer, &release.msi],
+        InstallKind::Msi => [&release.msi, &release.installer],
+    };
+    candidates
+        .iter()
+        .find(|asset| !asset.url.is_empty())
+        .map(|asset| (*asset).clone())
 }
 
 fn version_parts(text: &str) -> Vec<u64> {
@@ -1612,11 +1626,11 @@ fn latest_release() -> Result<LatestRelease, String> {
     };
     if let Some(assets) = data.get("assets").and_then(|value| value.as_array()) {
         for asset in assets {
-            let name = asset
+            let original = asset
                 .get("name")
                 .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
+                .unwrap_or("");
+            let name = original.to_ascii_lowercase();
             let link = asset
                 .get("browser_download_url")
                 .and_then(|value| value.as_str())
@@ -1625,6 +1639,7 @@ fn latest_release() -> Result<LatestRelease, String> {
                 continue;
             }
             let item = ReleaseAsset {
+                name: original.to_string(),
                 url: link.to_string(),
                 sha256: asset_digest(asset),
             };
@@ -1646,24 +1661,19 @@ fn check_update_impl() -> Result<UpdateInfo, String> {
     let release = latest_release()?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let kind = install_kind(&exe);
-    let asset = match kind {
-        InstallKind::Portable => {
-            if !release.archive.url.is_empty() {
-                &release.archive
-            } else {
-                &release.portable
-            }
-        }
-        InstallKind::Nsis => &release.installer,
-        InstallKind::Msi => &release.msi,
-    };
-    let can_self_update = !asset.url.is_empty() && !asset.sha256.is_empty();
+    let asset = pick_update_asset(kind, &release);
+    let can_self_update = asset
+        .as_ref()
+        .map(|item| !item.url.is_empty() && !item.sha256.is_empty())
+        .unwrap_or(false);
     Ok(UpdateInfo {
         available: version_is_newer(&release.latest, APP_VERSION),
         current: APP_VERSION.to_string(),
         latest: release.latest,
         url: release.url,
         installer: release.installer.url,
+        asset_url: asset.as_ref().map(|item| item.url.clone()).unwrap_or_default(),
+        asset_name: asset.as_ref().map(|item| item.name.clone()).unwrap_or_default(),
         mode: kind.as_str().to_string(),
         can_self_update,
     })
@@ -1693,6 +1703,62 @@ fn check_update(state: State<Shared>) -> Result<Option<UpdateInfo>, String> {
 #[cfg(test)]
 mod version_tests {
     use super::*;
+
+    fn asset(name: &str) -> ReleaseAsset {
+        ReleaseAsset {
+            name: name.to_string(),
+            url: format!("https://example.test/{name}"),
+            sha256: "abc".to_string(),
+        }
+    }
+
+    fn release(
+        archive: Option<ReleaseAsset>,
+        portable: Option<ReleaseAsset>,
+        installer: Option<ReleaseAsset>,
+        msi: Option<ReleaseAsset>,
+    ) -> LatestRelease {
+        LatestRelease {
+            latest: "2.0.6".into(),
+            url: String::new(),
+            portable: portable.unwrap_or_default(),
+            archive: archive.unwrap_or_default(),
+            installer: installer.unwrap_or_default(),
+            msi: msi.unwrap_or_default(),
+        }
+    }
+
+    #[test]
+    fn picks_asset_for_install_kind() {
+        let full = release(
+            Some(asset("Synapse_portable.zip")),
+            Some(asset("synapse.exe")),
+            Some(asset("Synapse_2.0.6_x64-setup.exe")),
+            Some(asset("Synapse_2.0.6_x64_en-US.msi")),
+        );
+        assert_eq!(
+            pick_update_asset(InstallKind::Portable, &full).unwrap().name,
+            "Synapse_portable.zip"
+        );
+        assert_eq!(
+            pick_update_asset(InstallKind::Nsis, &full).unwrap().name,
+            "Synapse_2.0.6_x64-setup.exe"
+        );
+        assert_eq!(
+            pick_update_asset(InstallKind::Msi, &full).unwrap().name,
+            "Synapse_2.0.6_x64_en-US.msi"
+        );
+
+        let setup_only = release(None, None, Some(asset("setup.exe")), None);
+        assert_eq!(
+            pick_update_asset(InstallKind::Msi, &setup_only).unwrap().name,
+            "setup.exe"
+        );
+        assert!(pick_update_asset(InstallKind::Portable, &setup_only).is_none());
+
+        let empty = release(None, None, None, None);
+        assert!(pick_update_asset(InstallKind::Portable, &empty).is_none());
+    }
 
     #[test]
     fn compares_versions_numerically() {
@@ -1801,19 +1867,20 @@ fn apply_update(state: State<Shared>) -> Result<UpdateOutcome, String> {
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let kind = install_kind(&exe);
-    let (asset, file_name) = match kind {
-        InstallKind::Portable => {
-            if !release.archive.url.is_empty() {
-                (&release.archive, "Synapse_portable.zip".to_string())
-            } else {
-                (&release.portable, format!("Synapse-{}.exe", release.latest))
-            }
+    let asset = pick_update_asset(kind, &release)
+        .ok_or_else(|| "В релизе нет подходящего файла обновления".to_string())?;
+    let file_name = if asset.name.is_empty() {
+        match kind {
+            InstallKind::Portable => format!("Synapse-{}.exe", release.latest),
+            InstallKind::Nsis => format!("Synapse-{}-setup.exe", release.latest),
+            InstallKind::Msi => format!("Synapse-{}.msi", release.latest),
         }
-        InstallKind::Nsis => (
-            &release.installer,
-            format!("Synapse-{}-setup.exe", release.latest),
-        ),
-        InstallKind::Msi => (&release.msi, format!("Synapse-{}.msi", release.latest)),
+    } else {
+        Path::new(&asset.name)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| format!("Synapse-{}", release.latest))
     };
     if asset.url.is_empty() {
         return Err("В релизе нет подходящего файла обновления".into());
