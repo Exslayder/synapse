@@ -101,7 +101,6 @@ struct AppConfig {
     window_geometry: String,
     window_topmost: bool,
     auto_check_updates: bool,
-    last_update_check: String,
     sites: Vec<Site>,
 }
 
@@ -121,7 +120,6 @@ impl Default for AppConfig {
             window_geometry: String::new(),
             window_topmost: false,
             auto_check_updates: true,
-            last_update_check: String::new(),
             sites: default_sites(),
         }
     }
@@ -609,93 +607,6 @@ fn window_handles(pid: u32) -> Vec<isize> {
 }
 
 #[cfg(windows)]
-static TITLE_NEEDLE: Mutex<String> = Mutex::new(String::new());
-#[cfg(windows)]
-static TITLE_EXE: Mutex<String> = Mutex::new(String::new());
-#[cfg(windows)]
-static TITLE_FOUND: Mutex<Option<isize>> = Mutex::new(None);
-
-#[cfg(windows)]
-fn process_exe_name(pid: u32) -> Option<String> {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-        PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut buffer = [0u16; 1024];
-        let mut size = buffer.len() as u32;
-        let ok = QueryFullProcessImageNameW(
-            handle,
-            PROCESS_NAME_WIN32,
-            windows::core::PWSTR(buffer.as_mut_ptr()),
-            &mut size,
-        )
-        .is_ok();
-        let _ = CloseHandle(handle);
-        if !ok {
-            return None;
-        }
-        let path = String::from_utf16_lossy(&buffer[..size as usize]);
-        Some(
-            path.rsplit(['\\', '/'])
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase(),
-        )
-    }
-}
-
-#[cfg(windows)]
-fn find_site_window(name: &str, exe: &str) -> Option<isize> {
-    use windows::core::BOOL;
-    use windows::Win32::Foundation::{HWND, LPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-        IsWindowVisible,
-    };
-
-    unsafe extern "system" fn collect(hwnd: HWND, _: LPARAM) -> BOOL {
-        unsafe {
-            if TITLE_FOUND.lock().unwrap().is_some() {
-                return BOOL(0);
-            }
-            if !IsWindowVisible(hwnd).as_bool() {
-                return BOOL(1);
-            }
-            let len = GetWindowTextLengthW(hwnd);
-            if len <= 0 {
-                return BOOL(1);
-            }
-            let mut buf = vec![0u16; len as usize + 1];
-            let read = GetWindowTextW(hwnd, &mut buf);
-            let title = String::from_utf16_lossy(&buf[..read as usize]).to_ascii_lowercase();
-            let needle = TITLE_NEEDLE.lock().unwrap().to_ascii_lowercase();
-            if needle.is_empty() || !title.contains(&needle) {
-                return BOOL(1);
-            }
-            let mut pid = 0u32;
-            GetWindowThreadProcessId(hwnd, Some(&mut pid));
-            let exe_name = TITLE_EXE.lock().unwrap().to_ascii_lowercase();
-            if process_exe_name(pid).as_deref() != Some(exe_name.as_str()) {
-                return BOOL(1);
-            }
-            *TITLE_FOUND.lock().unwrap() = Some(hwnd.0 as isize);
-            BOOL(0)
-        }
-    }
-
-    *TITLE_NEEDLE.lock().unwrap() = name.to_string();
-    *TITLE_EXE.lock().unwrap() = exe.to_string();
-    *TITLE_FOUND.lock().unwrap() = None;
-    unsafe {
-        let _ = EnumWindows(Some(collect), LPARAM(0));
-    }
-    *TITLE_FOUND.lock().unwrap()
-}
-
-#[cfg(windows)]
 fn focus_handle(raw: isize) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -706,13 +617,6 @@ fn focus_handle(raw: isize) {
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
-    }
-}
-
-#[cfg(windows)]
-fn focus_window(pid: u32) {
-    if let Some(raw) = window_handles(pid).first() {
-        focus_handle(*raw);
     }
 }
 
@@ -772,14 +676,6 @@ fn apply_pin(pid: u32, topmost: bool) {
     let handles = window_handles(pid);
     for raw in handles {
         set_topmost(raw, topmost, false);
-    }
-}
-
-#[cfg(windows)]
-fn apply_pin_force(pid: u32, topmost: bool) {
-    let handles = window_handles(pid);
-    for raw in handles {
-        set_topmost(raw, topmost, true);
     }
 }
 
@@ -1467,7 +1363,6 @@ struct UpdateInfo {
     current: String,
     latest: String,
     url: String,
-    installer: String,
     asset_url: String,
     asset_name: String,
     mode: String,
@@ -1671,7 +1566,6 @@ fn check_update_impl() -> Result<UpdateInfo, String> {
         current: APP_VERSION.to_string(),
         latest: release.latest,
         url: release.url,
-        installer: release.installer.url,
         asset_url: asset.as_ref().map(|item| item.url.clone()).unwrap_or_default(),
         asset_name: asset.as_ref().map(|item| item.name.clone()).unwrap_or_default(),
         mode: kind.as_str().to_string(),

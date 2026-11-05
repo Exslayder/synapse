@@ -125,7 +125,7 @@
   .btn.ghost:hover{border-color:#33415a}
   .btn.small{padding:6px 10px;font-size:12px}
 
-  .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
+  .toast{position:fixed;left:50%;bottom:88px;transform:translate(-50%,20px);opacity:0;pointer-events:none;
     background:#1d2632;border:1px solid var(--line);color:var(--text);font-size:12.5px;
     padding:9px 14px;border-radius:10px;transition:.2s}
   .toast.show{opacity:1;transform:translate(-50%,0)}
@@ -180,6 +180,11 @@
           <div class="hint">Если DoH не ответил, запрос уйдёт по обычному DNS</div>
           <div class="switch" id="fallback" role="switch" aria-checked="false"></div>
         </div>
+        <div class="row">
+          <div class="lbl">Таймаут запроса</div>
+          <div class="field small"><input id="dohTimeout" inputmode="decimal"></div>
+          <div class="hint">Секунды на один запрос</div>
+        </div>
       </div>
     </div>
 
@@ -210,17 +215,12 @@
     </div>
 
     <div class="group">
-      <h3>Прокси</h3>
+      <h3>Локальный прокси</h3>
       <div class="box">
         <div class="row">
           <div class="lbl">Порт</div>
           <div class="field small"><input id="proxyPort" inputmode="numeric"></div>
-          <div class="hint">Разрешённые порты: 80, 443</div>
-        </div>
-        <div class="row">
-          <div class="lbl">Таймаут DoH</div>
-          <div class="field small"><input id="dohTimeout" inputmode="decimal"></div>
-          <div class="hint">Секунды на один запрос</div>
+          <div class="hint">Работает в DoH и VPN · разрешены порты 80 и 443</div>
         </div>
       </div>
     </div>
@@ -312,7 +312,6 @@
   });
 
   const isOn = id => $(id).classList.contains('on');
-  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   let tunnelInfo = null;
   let connectionMode = 'doh';
@@ -326,7 +325,6 @@
       $('modeSwitch').setAttribute('aria-checked', String(connectionMode === 'vpn'));
       $('dohGroup').hidden = connectionMode === 'vpn';
       $('vpnGroup').hidden = connectionMode !== 'vpn';
-      updateVpnUi();
     };
     if (animate && document.startViewTransition) {
       document.startViewTransition(apply);
@@ -367,18 +365,7 @@
     }
   }
 
-  function updateVpnUi() {
-    const on = connectionMode === 'vpn';
-    ['dohUrl', 'bootstrap', 'dohTimeout'].forEach(id => { $(id).disabled = on; });
-    const dohField = $('dohUrl').closest('.field');
-    if (dohField) dohField.style.opacity = on ? '0.55' : '1';
-    const bootstrapField = $('bootstrap').closest('.field');
-    if (bootstrapField) bootstrapField.style.opacity = on ? '0.55' : '1';
-    $('fallback').style.opacity = on ? '0.55' : '1';
-    $('fallback').style.pointerEvents = on ? 'none' : '';
-  }
-
-  function fill(cfg, base, tunnel) {
+  function fill(cfg, tunnel) {
     tunnelInfo = tunnel || {};
     $('dohUrl').value = cfg.doh?.url || '';
     $('bootstrap').value = (cfg.doh?.bootstrap_ips || []).join(', ');
@@ -399,7 +386,6 @@
       ? 'ключ сохранён'
       : 'vless://...';
     updateTunnelStatus(tunnelInfo);
-    updateVpnUi();
   }
 
   function toast(msg, kind) {
@@ -432,19 +418,11 @@
     return cfg;
   }
 
-  function toast(msg, kind) {
-    const t = $('toast');
-    t.textContent = msg;
-    t.className = 'toast show' + (kind ? ' ' + kind : '');
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => { t.className = 'toast'; }, 2200);
-  }
-
   (async () => {
     if (T) {
       try {
         state = await T.core.invoke('get_state');
-        fill(state.config, state.base, state.tunnel);
+        fill(state.config, state.tunnel);
       } catch (e) { toast(String(e), 'err'); }
     }
     if (!state) {
@@ -460,7 +438,7 @@
           { id: 'claude', name: 'Claude', url: 'https://claude.ai', pinned: false, enabled: true, direct: false },
           { id: 'grok', name: 'Grok', url: 'https://grok.com', pinned: false, enabled: true, direct: false }
         ]
-      }, '', { enabled: false, configured: false, running: false, socks_port: 10808, error: '' });
+      }, { enabled: false, configured: false, running: false, socks_port: 10808, error: '' });
     }
 
     document.querySelectorAll('#modeSwitch button').forEach(button => {
@@ -483,9 +461,8 @@
       }
       try {
         const ip = await T.core.invoke('check_tunnel');
-        $('vpnStatus').textContent = 'Внешний IP через VPN: ' + ip;
-        $('vpnStatus').style.color = 'var(--ok)';
-        toast('VPN отвечает', 'ok');
+        $('vpnStatus').title = 'Внешний IP через VPN: ' + ip;
+        toast('Внешний IP через VPN: ' + ip, 'ok');
       } catch (e) { toast(String(e), 'err'); }
     });
 
@@ -494,7 +471,7 @@
       if (!confirm('Удалить сохранённую VPN-ссылку?')) return;
       try {
         state = await T.core.invoke('clear_tunnel_link');
-        fill(state.config, state.base, state.tunnel);
+        fill(state.config, state.tunnel);
         toast('VPN-ссылка удалена', 'ok');
       } catch (e) { toast(String(e), 'err'); }
     });
@@ -516,7 +493,7 @@
         if (link) args.tunnelLink = link;
         const updated = await T.core.invoke('save_config', args);
         state = updated;
-        fill(state.config, state.base, state.tunnel);
+        fill(state.config, state.tunnel);
         if (updated.tunnel?.error) toast('VPN: ' + updated.tunnel.error, 'err');
         else toast('Сохранено', 'ok');
       } catch (e) { toast(String(e), 'err'); }
