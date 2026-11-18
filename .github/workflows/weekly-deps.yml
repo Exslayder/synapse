@@ -14,6 +14,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     runs-on: windows-latest
 
     steps:
@@ -48,6 +49,9 @@ jobs:
       - name: Rebuild application
         run: npm run tauri build
 
+      - name: Run tests
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml
+
       - name: Open dependency update pull request
         shell: pwsh
         env:
@@ -67,14 +71,23 @@ jobs:
           git push --force origin chore/weekly-deps
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $existing = gh pr list --head chore/weekly-deps --state open --json number --jq '.[0].number'
-          if ($existing) {
-            Write-Host "Updated existing pull request #$existing"
-          } else {
+          $pr = gh pr list --head chore/weekly-deps --state open --json number --jq '.[0].number'
+          if (-not $pr) {
             gh pr create `
               --base main `
               --head chore/weekly-deps `
               --title "chore: weekly dependency update" `
-              --body "Автоматическое обновление npm- и cargo-зависимостей. Сборка проверена в этом workflow; перед merge просмотрите diff lock-файлов."
+              --body "Автоматическое обновление npm- и cargo-зависимостей. Сборка и тесты проверены в этом workflow."
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $pr = gh pr list --head chore/weekly-deps --state open --json number --jq '.[0].number'
+            if (-not $pr) { Write-Host "Pull request not found"; exit 1 }
+          } else {
+            Write-Host "Updated existing pull request #$pr"
           }
+
+          # PR создан токеном Actions, поэтому Build на него сам не запустится.
+          gh workflow run build.yml --ref chore/weekly-deps
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          gh pr merge $pr --auto --squash --delete-branch
+          if ($LASTEXITCODE -ne 0) { Write-Host "Auto-merge не включился, PR останется на ручное слияние" }
