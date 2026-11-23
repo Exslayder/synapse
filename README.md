@@ -85,9 +85,8 @@ npm run tauri build
 
 - `.github/workflows/release.yml` — по тегу `v*` собирает портативный zip, установщик и MSI и публикует релиз; описание релиза берётся из `CHANGELOG.md` (раздел с номером версии) и автоматически дополняется ссылкой на сравнение с предыдущим тегом.
 - `.github/workflows/build.yml` — проверяет сборку на каждый push, pull request и по ручному запуску.
-- `.github/workflows/weekly-deps.yml` — раз в неделю обновляет npm- и cargo-зависимости, прогоняет сборку и тесты, открывает PR, публикует статус `build` и сливает его после успешной проверки.
-- `.github/workflows/auto-merge-deps.yml` — автоматически вливает PR Dependabot: обновления GitHub Actions и patch-версии npm/cargo. Minor и major для npm/cargo остаются на ручную проверку.
-- Dependabot открывает PR с обновлениями зависимостей раз в неделю.
+- `.github/workflows/auto-merge-deps.yml` — автоматически вливает PR Dependabot после успешной сборки: обновления GitHub Actions и patch-версии npm/cargo. Minor и major для npm/cargo остаются на ручную проверку.
+- Dependabot раз в неделю открывает сгруппированные PR с обновлениями npm, cargo и GitHub Actions.
 
 ## Приватность
 
